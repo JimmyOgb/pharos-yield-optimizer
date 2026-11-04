@@ -1,0 +1,40 @@
+# ==============================================================================
+# PHAROS YIELD OPTIMIZER — GIT IGNORE SPECIFICATION
+# Mode: Strictly Read-Only & Non-Custodial (Zero Private Keys / Zero Secrets)
+# ==============================================================================
+
+# Dependencies
+node_modules/
+
+# Production Build Output (Reproducible via `npm run build`)
+dist/
+build/
+*.tsbuildinfo
+
+# Vercel Project Metadata & Build Artifacts
+.vercel
+.vercel/
+.vercel_build_output/
+
+# Environment Configurations & Private Overrides (Never commit secrets)
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# Operating System & Editor Artifacts
+Thumbs.db
+Desktop.ini
+.DS_Store
+.vscode/
+.idea/
+
+# Logs & Diagnostics
+*.log
+npm-debug.log*
+yarn-debug.log*
+
+# Test Coverage
+coverage/
+.nyc_output/

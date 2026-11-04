@@ -1,0 +1,38 @@
+{
+  "name": "pharos-yield-optimizer",
+  "version": "0.1.0",
+  "description": "Non-custodial Yield Optimizer for Pharos Pacific Mainnet (Chain ID 1672)",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "tsc --noEmit && node scripts/build.js",
+    "start": "node dist/server.js",
+    "start:prod": "node dist/server.js",
+    "serve": "node dist/server.js",
+    "dev": "node --experimental-strip-types src/server/index.ts",
+    "test:unit": "node --experimental-strip-types --test tests/unit/*.test.ts",
+    "test:integration": "node --experimental-strip-types --test tests/integration/*.test.ts",
+    "test:all": "node --experimental-strip-types --test tests/unit/*.test.ts tests/integration/*.test.ts",
+    "test": "node --experimental-strip-types --test tests/unit/*.test.ts tests/integration/*.test.ts",
+    "test:coverage": "node --experimental-strip-types --test --experimental-test-coverage tests/unit/*.test.ts tests/integration/*.test.ts",
+    "verify:numerical": "node --experimental-strip-types tests/numericalVerification.ts",
+    "verify:vercel": "node --experimental-strip-types scripts/verify-vercel.js"
+  },
+  "keywords": [
+    "pharos",
+    "defi",
+    "yield",
+    "optimizer",
+    "stpros",
+    "typescript"
+  ],
+  "author": "JimmyOgb",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^22.10.1",
+    "esbuild": "^0.28.2",
+    "typescript": "^5.7.2"
+  }
+}

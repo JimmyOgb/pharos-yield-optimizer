@@ -1,0 +1,294 @@
+/**
+ * Unit Tests for API Router, HTTP Server & UI Dashboard Endpoints
+ * Tests endpoints with real local HTTP requests, mocked RPC fixtures,
+ * and edge cases (RPC unavailable, stale data, malformed payloads, 404s).
+ */
+
+import { describe, it, before, after } from 'node:test';
+import assert from 'node:assert/strict';
+import http from 'node:http';
+import { createServer } from '../../src/server/index.ts';
+import { ApiRouter } from '../../src/server/router.ts';
+import { PharosRpcClient } from '../../src/rpc/pharosClient.ts';
+
+describe('Server & UI Dashboard - Integration & API Endpoints', () => {
+  let server: http.Server;
+  let baseUrl: string;
+  let mockClient: PharosRpcClient;
+  let router: ApiRouter;
+
+  before(async () => {
+    mockClient = new PharosRpcClient({ rpcUrl: 'http://mock-rpc' });
+
+    // Mock RPC calls for deterministic fast unit testing
+    (mockClient as any).request = async (method: string, params: readonly unknown[] = []) => {
+      if (method === 'eth_chainId') return '0x688'; // 1672
+      if (method === 'eth_blockNumber') return '0x14ffd8c'; // 22,019,468
+      if (method === 'eth_gasPrice') return '0x2540be400'; // 10 Gwei
+      if (method === 'eth_getBlockByNumber') {
+        const nowSec = Math.floor(Date.now() / 1000);
+        return {
+          number: '0x14ffd8c',
+          hash: '0xabc123',
+          timestamp: `0x${nowSec.toString(16)}`,
+          baseFeePerGas: '0x2540be400',
+        };
+      }
+      if (method === 'eth_call') {
+        const callObj = params[0] as { to: string; data: string };
+        // Faroo totalPooledPros()
+        if (callObj.data === '0x01e1d114') {
+          return '0x000000000000000000000000000000000000000000029b886d586a3d01ee1709'; // 3,152,335.1227 PROS
+        }
+        // Faroo totalSupply()
+        if (callObj.data === '0x18160ddd') {
+          return '0x00000000000000000000000000000000000000000002984445d7ac484049e4bf'; // 3,136,910.7559 stPROS
+        }
+        // StateView poolManager()
+        if (callObj.data === '0xdc4c90d3') {
+          return '0x000000000000000000000000d681e96ad464f8f7f7fa7e1e0c5a367175e44550';
+        }
+        return '0x00';
+      }
+      if (method === 'eth_getStorageAt') {
+        return '0x000000000000000000000000fd59860894e01773e9780b0d1dfae4ca2b56708d';
+      }
+      if (method === 'eth_getCode') {
+        return '0x6080604052';
+      }
+      throw new Error(`Unhandled mock method: ${method}`);
+    };
+
+    router = new ApiRouter(mockClient);
+    server = createServer(router);
+
+    await new Promise<void>((resolve) => {
+      server.listen(0, '127.0.0.1', () => {
+        const addr = server.address() as { port: number };
+        baseUrl = `http://127.0.0.1:${addr.port}`;
+        resolve();
+      });
+    });
+  });
+
+  after(async () => {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
+  describe('Static UI Assets', () => {
+    it('serves index.html at GET / with 200 OK and text/html', async () => {
+      const res = await fetch(`${baseUrl}/`);
+      assert.equal(res.status, 200);
+      assert.match(res.headers.get('content-type') || '', /text\/html/);
+      const text = await res.text();
+      assert.match(text, /Pharos Yield Optimizer/);
+      assert.match(text, /ACCEPTANCE CRITERIA STATUS: FEWER THAN THREE QUALIFYING SOURCES/);
+    });
+
+    it('serves styles.css at GET /styles.css with 200 OK and text/css', async () => {
+      const res = await fetch(`${baseUrl}/styles.css`);
+      assert.equal(res.status, 200);
+      assert.match(res.headers.get('content-type') || '', /text\/css/);
+      const text = await res.text();
+      assert.match(text, /--bg-base/);
+    });
+
+    it('serves app.js at GET /app.js with 200 OK and javascript', async () => {
+      const res = await fetch(`${baseUrl}/app.js`);
+      assert.equal(res.status, 200);
+      assert.match(res.headers.get('content-type') || '', /javascript/);
+      const text = await res.text();
+      assert.match(text, /refreshHealth/);
+    });
+
+    it('returns 404 for unknown route', async () => {
+      const res = await fetch(`${baseUrl}/unknown-file.txt`);
+      assert.equal(res.status, 404);
+    });
+  });
+
+  describe('API: GET /api/health', () => {
+    it('returns network status, block information, and freshness', async () => {
+      const res = await fetch(`${baseUrl}/api/health`);
+      assert.equal(res.status, 200);
+      const data = await res.json();
+
+      assert.equal(data.status, 'healthy');
+      assert.equal(data.chainId, 1672);
+      assert.equal(data.network, 'Pharos Pacific Mainnet');
+      assert.equal(data.latestBlockNumber, 22019468);
+      assert.equal(data.gasPriceGwei, '10.00 Gwei');
+      assert.equal(data.isFresh, true);
+    });
+
+    it('returns degraded status when RPC encounters error', async () => {
+      const brokenClient = new PharosRpcClient({ rpcUrl: 'http://broken-rpc' });
+      (brokenClient as any).request = async () => {
+        throw new Error('Connection refused');
+      };
+      const brokenRouter = new ApiRouter(brokenClient);
+      const brokenServer = createServer(brokenRouter);
+
+      await new Promise<void>((resolve) => brokenServer.listen(0, '127.0.0.1', resolve));
+      const brokenPort = (brokenServer.address() as { port: number }).port;
+
+      const res = await fetch(`http://127.0.0.1:${brokenPort}/api/health`);
+      assert.equal(res.status, 503);
+      const data = await res.json();
+      assert.equal(data.status, 'degraded');
+      assert.equal(data.isFresh, false);
+
+      await new Promise<void>((resolve) => brokenServer.close(() => resolve()));
+    });
+  });
+
+  describe('API: GET /api/sources', () => {
+    it('returns yield source comparison and strictly enforces one-source invariant', async () => {
+      const res = await fetch(`${baseUrl}/api/sources`);
+      assert.equal(res.status, 200);
+      const data = await res.json();
+
+      // Verify invariant notice
+      assert.equal(data.invariantNotice.verifiedCount, 1);
+      assert.equal(data.invariantNotice.requiredCount, 3);
+      assert.equal(data.invariantNotice.isRequirementMet, false);
+      assert.match(data.invariantNotice.message, /Only ONE qualifying yield source/);
+
+      // Verify sources count and classification
+      assert.equal(data.sources.length, 4);
+
+      // 1. Faroo stPROS
+      const faroo = data.sources.find((s: any) => s.id === 'faroo-stpros');
+      assert.ok(faroo);
+      assert.equal(faroo.qualificationStatus, 'QUALIFIED_GENUINE_SOURCE');
+      assert.equal(faroo.isVerifiedOnChain, true);
+      assert.equal(faroo.liveRate, '1.00491704');
+
+      // 2. DEX LP
+      const dex = data.sources.find((s: any) => s.id === 'pharos-dex-lp');
+      assert.ok(dex);
+      assert.equal(dex.qualificationStatus, 'DISQUALIFIED_FROM_LIVE_APR');
+      assert.equal(dex.liveRate, 'UNAVAILABLE');
+      assert.match(dex.exclusionReason, /indexer or subgraph/);
+
+      // 3. Axil APC3M
+      const axil = data.sources.find((s: any) => s.id === 'axil-apc3m');
+      assert.ok(axil);
+      assert.equal(axil.qualificationStatus, 'DISQUALIFIED_FROM_PROS_REBALANCING');
+      assert.match(axil.exclusionReason, /off-chain target APY/i);
+
+      // 4. Native PoS
+      const pos = data.sources.find((s: any) => s.id === 'native-pos-consensus');
+      assert.ok(pos);
+      assert.equal(pos.qualificationStatus, 'DISQUALIFIED_AS_DELEGATABLE');
+      assert.match(pos.exclusionReason, /permissionless validator delegation/i);
+    });
+  });
+
+  describe('API: POST /api/recommendation', () => {
+    it('generates MOVE recommendation for 1,000 PROS over 60 days', async () => {
+      const res = await fetch(`${baseUrl}/api/recommendation`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          principalPros: 1000,
+          horizonDays: 60,
+          requiresInstantLiquidity: false,
+        }),
+      });
+
+      assert.equal(res.status, 200);
+      const data = await res.json();
+      assert.equal(data.status, 'SUCCESS');
+      assert.equal(data.recommendation.decision, 'MOVE');
+      assert.equal(data.recommendation.targetStrategyId, 'faroo-patient-staking');
+      assert.ok(data.recommendation.projectedNetGainPros > 0);
+    });
+
+    it('generates STAY_PUT recommendation when horizon (7 days) is less than lockup (14 days)', async () => {
+      const res = await fetch(`${baseUrl}/api/recommendation`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          principalPros: 1000,
+          horizonDays: 7,
+          requiresInstantLiquidity: false,
+        }),
+      });
+
+      assert.equal(res.status, 200);
+      const data = await res.json();
+      assert.equal(data.status, 'SUCCESS');
+      assert.equal(data.recommendation.decision, 'STAY_PUT');
+      assert.equal(data.recommendation.reasonCode, 'HORIZON_SHORTER_THAN_LOCKUP');
+    });
+
+    it('handles malformed JSON body with 400 Bad Request', async () => {
+      const res = await fetch(`${baseUrl}/api/recommendation`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: 'invalid-json{{{',
+      });
+
+      assert.equal(res.status, 400);
+      const data = await res.json();
+      assert.match(data.error, /Invalid JSON/);
+    });
+  });
+
+  describe('API: POST /api/transaction-review', () => {
+    it('returns 3-step unsigned transaction review for Faroo Patient Staking', async () => {
+      const res = await fetch(`${baseUrl}/api/transaction-review`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          strategyId: 'faroo-patient-staking',
+          amountPros: 2500,
+          userAddress: '0x3333333333333333333333333333333333333333',
+        }),
+      });
+
+      assert.equal(res.status, 200);
+      const data = await res.json();
+
+      assert.equal(data.strategyId, 'faroo-patient-staking');
+      assert.equal(data.safetyNotice.isNonCustodial, true);
+      assert.equal(data.safetyNotice.canSign, false);
+      assert.equal(data.steps.length, 3);
+      assert.equal(data.steps[0].payloadStatus, 'AVAILABLE');
+      assert.equal(data.steps[1].payloadStatus, 'AVAILABLE');
+      assert.equal(data.steps[2].payloadStatus, 'AVAILABLE');
+    });
+
+    it('returns UNAVAILABLE status for Axil review request', async () => {
+      const res = await fetch(`${baseUrl}/api/transaction-review`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          strategyId: 'axil-prime-credit',
+          amountPros: 1000,
+        }),
+      });
+
+      assert.equal(res.status, 200);
+      const data = await res.json();
+      assert.equal(data.steps[0].payloadStatus, 'UNAVAILABLE');
+      assert.match(data.steps[0].unavailabilityReason, /TRANSACTION_PAYLOAD_UNAVAILABLE/);
+    });
+
+    it('handles invalid strategy with 400 Bad Request', async () => {
+      const res = await fetch(`${baseUrl}/api/transaction-review`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          strategyId: 'non-existent-strategy',
+          amountPros: 1000,
+        }),
+      });
+
+      assert.equal(res.status, 400);
+      const data = await res.json();
+      assert.match(data.error, /Unsupported strategy ID/);
+    });
+  });
+});

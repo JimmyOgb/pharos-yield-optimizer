@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pharos Yield Optimizer | Non-Custodial Pacific Mainnet Agent</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Top Navigation / Header -->
+    <header class="app-header">
+      <div class="header-left">
+        <div class="logo-group">
+          <div class="logo-icon">Φ</div>
+          <div class="logo-text">
+            <h1>Pharos Yield Optimizer</h1>
+            <span class="subtext">Deterministic DeFi Optimization Engine • Non-Custodial</span>
+          </div>
+        </div>
+      </div>
+      <div class="header-right">
+        <div class="network-badge" id="networkBadge">
+          <span class="status-dot healthy" id="networkDot"></span>
+          <span class="network-name">Pharos Pacific Mainnet</span>
+          <span class="chain-id">ID: 1672</span>
+        </div>
+        <button id="refreshBtn" class="btn btn-secondary btn-sm" title="Refresh Live State">
+          <span class="refresh-icon">↻</span> Refresh
+        </button>
+      </div>
+    </header>
+
+    <!-- CRITICAL INVARIANT BANNER -->
+    <section class="invariant-banner" id="invariantBanner">
+      <div class="banner-icon">⚠️</div>
+      <div class="banner-content">
+        <h3>ACCEPTANCE CRITERIA STATUS: FEWER THAN THREE QUALIFYING SOURCES</h3>
+        <p>
+          Only <strong>ONE qualifying yield source (Faroo stPROS)</strong> is currently verified on Pharos Pacific Mainnet.
+          The official three-source acceptance requirement is <strong>NOT YET MET</strong>.
+          Disqualified candidates (Pharos DEX LP dynamic APR, Axil off-chain credit, and Native PoS validator staking) are transparently categorized below without fabricated metrics.
+        </p>
+      </div>
+    </section>
+
+    <!-- SECTION A: NETWORK & RPC STATUS BAR -->
+    <section class="network-status-bar" id="networkStatusBar">
+      <div class="status-item">
+        <span class="label">RPC Connection</span>
+        <span class="val text-success" id="rpcStatusVal">Connecting...</span>
+      </div>
+      <div class="status-item">
+        <span class="label">Latest Block</span>
+        <span class="val font-mono" id="latestBlockVal">—</span>
+      </div>
+      <div class="status-item">
+        <span class="label">Block Timestamp</span>
+        <span class="val font-mono" id="blockTimeVal">—</span>
+      </div>
+      <div class="status-item">
+        <span class="label">Live Gas Price</span>
+        <span class="val font-mono" id="gasPriceVal">—</span>
+      </div>
+      <div class="status-item">
+        <span class="label">Data Freshness</span>
+        <span class="val" id="freshnessVal"><span class="badge badge-info">Checking</span></span>
+      </div>
+      <div class="status-item">
+        <span class="label">Last Refreshed</span>
+        <span class="val" id="lastRefreshVal">—</span>
+      </div>
+    </section>
+
+    <!-- MAIN TWO-COLUMN DASHBOARD GRID -->
+    <main class="dashboard-grid">
+      <!-- LEFT COLUMN: RECOMMENDATION & SCENARIO SIMULATOR -->
+      <div class="grid-col-left">
+        <!-- SECTION C: RECOMMENDATION PANEL -->
+        <section class="card recommendation-card" id="recommendationCard">
+          <div class="card-header">
+            <div class="card-title-group">
+              <span class="section-tag">ENGINE OUTPUT</span>
+              <h2>Deterministic Recommendation</h2>
+            </div>
+            <div id="decisionBadgeContainer">
+              <span class="decision-badge badge-loading">EVALUATING</span>
+            </div>
+          </div>
+          <div class="card-body">
+            <div class="recommendation-hero">
+              <div class="hero-primary">
+                <span class="hero-label">Expected Net Alpha Gain</span>
+                <div class="hero-value font-mono" id="netAlphaVal">— PROS</div>
+                <span class="hero-subtext" id="netAlphaSubtext">Awaiting scenario parameters...</span>
+              </div>
+              <div class="hero-stats">
+                <div class="stat-pill">
+                  <span class="stat-label">Estimated Gas</span>
+                  <span class="stat-val font-mono" id="gasCostEstVal">—</span>
+                </div>
+                <div class="stat-pill">
+                  <span class="stat-label">Entry/Exit Friction</span>
+                  <span class="stat-val font-mono" id="frictionCostVal">—</span>
+                </div>
+                <div class="stat-pill">
+                  <span class="stat-label">Break-Even Period</span>
+                  <span class="stat-val font-mono" id="breakEvenVal">—</span>
+                </div>
+                <div class="stat-pill">
+                  <span class="stat-label">Mandatory Lockup</span>
+                  <span class="stat-val font-mono" id="lockupPeriodVal">—</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Recommendation Reasons & Disclosures -->
+            <div class="explanation-box">
+              <h4>Reasoning & Provenance Safeguards</h4>
+              <ul class="reason-list" id="reasonsList">
+                <li>Connecting to live Pacific Mainnet RPC...</li>
+              </ul>
+            </div>
+
+            <!-- Action / Review Button -->
+            <div class="action-footer">
+              <button id="openReviewerBtn" class="btn btn-primary btn-block" disabled>
+                📋 Review Unsigned Transaction Calldata
+              </button>
+              <div class="safety-caption">
+                🔒 Strictly Non-Custodial: The agent generates unsigned calldata for external inspection only. Zero private key access. Zero automatic broadcasting.
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- SECTION D: SCENARIO CONTROLS -->
+        <section class="card controls-card">
+          <div class="card-header">
+            <div class="card-title-group">
+              <span class="section-tag">USER INPUT</span>
+              <h2>Scenario Simulator</h2>
+            </div>
+            <span class="scenario-badge">Pure Modeling</span>
+          </div>
+          <div class="card-body">
+            <form id="scenarioForm" class="scenario-form">
+              <div class="form-group">
+                <label for="principalInput">Principal Allocation Amount</label>
+                <div class="input-with-affix">
+                  <input type="number" id="principalInput" value="1000" min="1" max="100000000" step="any">
+                  <span class="input-affix">PROS</span>
+                </div>
+                <div class="quick-amounts">
+                  <button type="button" class="btn-chip" data-amount="100">100</button>
+                  <button type="button" class="btn-chip active" data-amount="1000">1,000</button>
+                  <button type="button" class="btn-chip" data-amount="5000">5,000</button>
+                  <button type="button" class="btn-chip" data-amount="25000">25,000</button>
+                </div>
+              </div>
+
+              <div class="form-group">
+                <div class="label-with-val">
+                  <label for="horizonInput">Investment Horizon</label>
+                  <span class="range-display font-mono" id="horizonValDisplay">60 Days</span>
+                </div>
+                <input type="range" id="horizonInput" min="1" max="365" value="60" class="slider">
+                <div class="slider-ticks">
+                  <span>1d</span>
+                  <span>14d (Queue)</span>
+                  <span>60d</span>
+                  <span>180d</span>
+                  <span>365d</span>
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label>Exit Liquidity Preference</label>
+                <div class="radio-card-group">
+                  <label class="radio-card">
+                    <input type="radio" name="liquidityPref" value="patient" checked>
+                    <div class="radio-card-content">
+                      <div class="radio-title">Patient Staking Exit (14-day Queue)</div>
+                      <div class="radio-desc">0% exit fee + gas only. Optimal for medium/long-term holders.</div>
+                    </div>
+                  </label>
+                  <label class="radio-card">
+                    <input type="radio" name="liquidityPref" value="instant">
+                    <div class="radio-card-content">
+                      <div class="radio-title">Instant DEX Liquidity Exit</div>
+                      <div class="radio-desc">0.30% swap fee + slippage. For holders requiring immediate liquidity.</div>
+                    </div>
+                  </label>
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label for="currentStrategySelect">Current Asset Position</label>
+                <select id="currentStrategySelect" class="form-select">
+                  <option value="canonical-wpros-baseline">Canonical PROS / WPROS (0.00% Benchmark)</option>
+                  <option value="faroo-patient-staking">Already in Faroo stPROS (Patient Exit)</option>
+                  <option value="faroo-instant-dex">Already in Faroo stPROS (Instant Exit)</option>
+                </select>
+              </div>
+
+              <div class="form-notice">
+                ⚠️ <strong>Financial Modeling Notice:</strong> Illustrative yield assumption: 8.5% annualized. This is a model input for scenario calculations, not a verified current or forward APY. Actual yield may differ. These scenario controls simulate projected mathematical yield based on observed on-chain state and current gas prices. They do NOT represent executed transactions, actual wallet holdings, or guaranteed returns.
+              </div>
+            </form>
+          </div>
+        </section>
+      </div>
+
+      <!-- RIGHT COLUMN: PROTOCOL YIELD COMPARISON MATRIX -->
+      <div class="grid-col-right">
+        <!-- SECTION B: YIELD SOURCES COMPARISON -->
+        <section class="card sources-card">
+          <div class="card-header">
+            <div class="card-title-group">
+              <span class="section-tag">INVESTIGATED PROTOCOLS</span>
+              <h2>On-Chain Yield Comparison Matrix</h2>
+            </div>
+            <span class="badge badge-warning">1 Verified / 3 Disqualified</span>
+          </div>
+          <div class="card-body">
+            <p class="sources-intro">
+              Live comparison across all investigated yield sources on Pharos Pacific Mainnet. Unverified or off-chain rates are strictly flagged to prevent misleading users.
+            </p>
+
+            <div class="sources-list" id="sourcesList">
+              <!-- Source Cards injected via app.js -->
+              <div class="loading-placeholder">Loading live protocol states...</div>
+            </div>
+          </div>
+        </section>
+
+        <!-- SECURITY & EVIDENCE SAFEGUARDS CARD -->
+        <section class="card security-card">
+          <div class="card-header">
+            <div class="card-title-group">
+              <span class="section-tag">AUDIT & SAFETY</span>
+              <h2>Non-Custodial Architecture</h2>
+            </div>
+            <span class="badge badge-success">Zero Private Keys</span>
+          </div>
+          <div class="card-body">
+            <div class="security-pillars">
+              <div class="pillar">
+                <div class="pillar-icon">🔒</div>
+                <div class="pillar-content">
+                  <h5>Read-Only RPC Bridge</h5>
+                  <p>All network data is pulled directly from verified RPC node calls (<code>eth_call</code>, <code>eth_getBlockByNumber</code>). The optimizer never initiates signed transactions.</p>
+                </div>
+              </div>
+              <div class="pillar">
+                <div class="pillar-icon">⚖️</div>
+                <div class="pillar-content">
+                  <h5>Deterministic Engine</h5>
+                  <p>All recommendation logic executes in pure TypeScript with 1e18 fixed-point math, accounting for 100% of gas costs and protocol exit fees.</p>
+                </div>
+              </div>
+              <div class="pillar">
+                <div class="pillar-icon">👁️</div>
+                <div class="pillar-content">
+                  <h5>Reviewer-Only Calldata</h5>
+                  <p>The transaction reviewer prepares raw unsigned transaction calldata with verified ABI decoding. The user reviews and signs exclusively in their external wallet.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </main>
+
+    <!-- FOOTER -->
+    <footer class="app-footer">
+      <div class="footer-left">
+        Pharos Agent Arena Task 15 • Gate 5 Dashboard & Non-Custodial Reviewer
+      </div>
+      <div class="footer-right">
+        <span>Network: Pharos Pacific Mainnet (1672)</span>
+        <span>•</span>
+        <a href="https://pharos-agent-arena.vercel.app/tasks/yield-optimizer" target="_blank" rel="noreferrer">Arena Spec</a>
+        <span>•</span>
+        <a href="https://port.pharos.xyz" target="_blank" rel="noreferrer">Pharos Port</a>
+      </div>
+    </footer>
+  </div>
+
+  <!-- SECTION 4: NON-CUSTODIAL TRANSACTION REVIEWER MODAL -->
+  <div class="modal-backdrop" id="reviewerModal" style="display: none;">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div class="modal-title-group">
+          <span class="badge badge-warning">UNSIGNED TRANSACTIONS ONLY</span>
+          <h2>Non-Custodial Transaction Reviewer</h2>
+        </div>
+        <button id="closeModalBtn" class="btn-close">&times;</button>
+      </div>
+      <div class="modal-body" id="reviewerModalBody">
+        <div class="loading-placeholder">Preparing unsigned transaction calldata...</div>
+      </div>
+      <div class="modal-footer">
+        <div class="modal-disclaimer">
+          ⚠️ <strong>Non-Custodial Notice:</strong> The agent does NOT possess private keys and cannot sign or broadcast transactions. Copy the unsigned calldata below into your external Web3 wallet (e.g. MetaMask, Rabby) to sign and execute independently.
+        </div>
+        <button id="modalDismissBtn" class="btn btn-secondary">Close Reviewer</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
