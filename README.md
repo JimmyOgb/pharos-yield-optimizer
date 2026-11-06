@@ -62,13 +62,13 @@ npm run typecheck
 # 2. Production Build Check (Verifies typecheck, bundles dist/, and copies UI)
 npm run build
 
-# 3. Unit Tests (96 fast tests with mocked RPC fixtures and security tests)
+# 3. Unit Tests (99 fast tests with mocked RPC fixtures and security tests)
 npm run test:unit
 
-# 4. Live Integration Tests (34 tests against Pharos Pacific Mainnet RPC, Vercel adapter, and compiled bundle)
+# 4. Live Integration Tests (31 tests against Pharos Pacific Mainnet RPC, Vercel adapter, and compiled bundle)
 npm run test:integration
 
-# 5. Full Test Suite (Runs all 130 unit & live integration tests)
+# 5. Full Test Suite (Runs all 130 unit & live integration tests: 99 unit + 31 integration)
 npm run test:all
 # or
 npm test
@@ -84,7 +84,7 @@ npm run verify:vercel
 ```
 
 ### Current Verification Metrics
-- **Tests:** 130 passing, 0 failing across 46 suites (100% pass rate).
+- **Tests:** 130 passing (99 unit, 31 live integration), 0 failing across 46 suites (100% pass rate).
 - **Independent Checks:** 5 numerical precision cases + 13 serverless simulation checks = 148 verified engineering checks (Note: These are local engineering validation results, not official competition scoring points).
 - **Source Line Coverage:** 98.22% across all `src/` modules.
 - **Zero Runtime Dependencies:** Built strictly using native Node.js standard library (`node:http`, `node:fs`), native `fetch`, native `node:test`, and `esbuild` for build packaging only.
@@ -237,15 +237,21 @@ When authorized to proceed with external hosting:
 Comprehensive documentation for all completed gates is preserved in `docs/`:
 
 - **Gate 1:** [Official Requirements Audit](docs/GATE1_OFFICIAL_REQUIREMENTS_AUDIT.md), [Yield Source Feasibility](docs/GATE1_YIELD_SOURCE_FEASIBILITY.md), [Technical Feasibility](docs/GATE1_TECHNICAL_FEASIBILITY.md), [Evidence Register](docs/GATE1_EVIDENCE_REGISTER.md)
-- **Gate 1B:** [Yield Model Audit](docs/GATE1B_FAROO_YIELD_AUDIT.md)
-- **Gate 1C:** [Third Yield Source Discovery](docs/GATE1C_DISCOVERY_REPORT.md)
-- **Gate 1D:** [Native PoS Validator Verification](docs/GATE1D_VALIDATOR_STRATEGY_REPORT.md)
-- **Gate 1E:** [Acceptance-Criteria Reconciliation](docs/GATE1E_ACCEPTANCE_RECONCILIATION.md)
-- **Gate 2:** [System Architecture](docs/GATE2_SYSTEM_ARCHITECTURE.md), [Data Flow & Integration](docs/GATE2_DATA_FLOW_AND_INTEGRATION_PLAN.md), [Mathematical Methodology](docs/GATE2_MATHEMATICAL_METHODOLOGY.md), [UI/UX Specification](docs/GATE2_UI_UX_SPECIFICATION.md), [Testing Strategy](docs/GATE2_TESTING_STRATEGY.md), [Implementation Roadmap](docs/GATE2_IMPLEMENTATION_ROADMAP.md)
-- **Gate 3:** [Preflight Report](docs/GATE3_PREFLIGHT_REPORT.md), [Core Engine Architecture](docs/GATE3_CORE_ENGINE_ARCHITECTURE.md), [Mathematical Specification](docs/GATE3_MATHEMATICAL_SPECIFICATION.md), [Test Execution Report](docs/GATE3_TEST_EXECUTION_REPORT.md), [Final Report](docs/GATE3_FINAL_REPORT.md)
+- **Gate 1B:** [Faroo Verification](docs/GATE1B_FAROO_VERIFICATION.md), [Net Yield Model Audit](docs/GATE1B_NET_YIELD_MODEL_AUDIT.md), [Final Verdict](docs/GATE1B_FINAL_VERDICT.md)
+- **Gate 1C:** [Additional Source Discovery](docs/GATE1C_ADDITIONAL_SOURCE_DISCOVERY.md), [Final Acceptance Matrix](docs/GATE1C_FINAL_ACCEPTANCE_MATRIX.md), [Strategic Recommendation](docs/GATE1C_RECOMMENDATION.md)
+- **Gate 1D:** [Validator Discovery](docs/GATE1D_VALIDATOR_DISCOVERY.md), [Commission Verification](docs/GATE1D_COMMISSION_VERIFICATION.md), [Final Feasibility](docs/GATE1D_FINAL_FEASIBILITY.md)
+- **Gate 1E:** [Official Criteria Review](docs/GATE1E_OFFICIAL_CRITERIA_REVIEW.md), [Strategy Count Reconciliation](docs/GATE1E_STRATEGY_COUNT_RECONCILIATION.md), [Final Architecture Decision](docs/GATE1E_FINAL_ARCHITECTURE_DECISION.md)
+- **Gate 2:** [System Architecture](docs/GATE2_SYSTEM_ARCHITECTURE.md), [Technical Specification](docs/GATE2_TECHNICAL_SPECIFICATION.md), [Data & Evidence Model](docs/GATE2_DATA_AND_EVIDENCE_MODEL.md), [Yield Calculation Engine](docs/GATE2_YIELD_CALCULATION_ENGINE.md), [Security Design](docs/GATE2_SECURITY_AND_NONCUSTODIAL_DESIGN.md), [UI/UX Specification](docs/GATE2_UI_UX_SPECIFICATION.md), [Implementation Roadmap](docs/GATE2_IMPLEMENTATION_ROADMAP.md)
+- **Gate 3:** [Implementation Report](docs/GATE3_IMPLEMENTATION_REPORT.md), [Numerical Verification](docs/GATE3_NUMERICAL_VERIFICATION.md), [Test & Coverage Report](docs/GATE3_TEST_AND_COVERAGE_REPORT.md)
 - **Gate 4:** [Preflight Report](docs/GATE4_PREFLIGHT_REPORT.md), [RPC Client Report](docs/GATE4_RPC_CLIENT_REPORT.md), [Faroo Adapter Report](docs/GATE4_FAROO_ADAPTER_REPORT.md), [DEX Investigation Report](docs/GATE4_DEX_INVESTIGATION_REPORT.md), [Assumption Audit](docs/GATE4_ASSUMPTION_AUDIT.md), [Test Report](docs/GATE4_TEST_REPORT.md), [Final Report](docs/GATE4_FINAL_REPORT.md)
 - **Gate 5:** [Preflight Report](docs/GATE5_PREFLIGHT_REPORT.md), [UI Implementation Report](docs/GATE5_UI_IMPLEMENTATION_REPORT.md), [Transaction Reviewer Report](docs/GATE5_TRANSACTION_REVIEWER_REPORT.md), [Security Report](docs/GATE5_SECURITY_REPORT.md), [Test Report](docs/GATE5_TEST_REPORT.md), [Final Report](docs/GATE5_FINAL_REPORT.md)
 - **Gate 5.1:** [Preflight Report](docs/GATE5_1_PREFLIGHT_REPORT.md), [Transaction Security Audit](docs/GATE5_1_TRANSACTION_SECURITY_AUDIT.md), [API Security Audit](docs/GATE5_1_API_SECURITY_AUDIT.md), [Data Integrity Audit](docs/GATE5_1_DATA_INTEGRITY_AUDIT.md), [Test Reproduction Report](docs/GATE5_1_TEST_REPRODUCTION_REPORT.md), [Final Audit](docs/GATE5_1_FINAL_AUDIT.md)
 - **Gate 6:** [Preflight Report](docs/GATE6_PREFLIGHT_REPORT.md), [Security Hardening Report](docs/GATE6_SECURITY_HARDENING_REPORT.md), [Build and Packaging Report](docs/GATE6_BUILD_AND_PACKAGING_REPORT.md), [Production Smoke Test Report](docs/GATE6_PRODUCTION_SMOKE_TEST_REPORT.md), [Final Report](docs/GATE6_FINAL_REPORT.md)
 - **Gate 7A:** [Gas Model Unification](docs/GATE7A_5_FINAL_REPORT.md), [Deployment Readiness Audit](docs/GATE7A_6_FINAL_READINESS_DECISION.md)
 - **Gate 7B:** [Controlled Preflight](docs/gate-7b/GATE7B_1_FINAL_DECISION.md), [Git Preparation](docs/gate-7b/GATE7B_2_FINAL_DECISION.md)
+
+---
+
+## 📄 License
+
+This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for the full license text.

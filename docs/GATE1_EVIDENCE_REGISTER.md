@@ -13,7 +13,7 @@
 | Resource | Value / Endpoint | Evidence Tag | Source Provenance |
 | :--- | :--- | :---: | :--- |
 | **Pharos Pacific Mainnet RPC** | `https://rpc.pharos.xyz` | `VERIFIED_ONCHAIN` | Tested live via JSON-RPC `eth_chainId` -> `0x688` (1672) |
-| **Pharos Atlantic Testnet RPC**| `https://atlantic.dplabs-internal.com` | `VERIFIED_OFFICIAL_DOCUMENTATION`| Documented in official network docs (Chain ID `688689`) |
+| **Pharos Atlantic Testnet RPC**| `[REDACTED_INTERNAL_ENDPOINT]` | `HISTORICAL_REFERENCE`| Historical testnet reference redacted (internal DP Labs domain) (Chain ID `688689`) |
 | **Canonical MultiCall3** | `0xcA11bde05977b3631167028862bE2a173976CA11` | `VERIFIED_ONCHAIN` | Bytecode verified deployed on Pharos Pacific Mainnet |
 | **Block Explorer** | `https://pharoscan.com` / `https://pacific.pharosscan.xyz` | `VERIFIED_OFFICIAL_DOCUMENTATION`| Official Pharos block explorer portal |
 | **Pharos Port Ecosystem Hub** | `https://port.pharos.xyz` | `VERIFIED_OFFICIAL_DOCUMENTATION`| Production web portal serving staking and Harbor vaults |
