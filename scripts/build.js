@@ -15,6 +15,7 @@ const ROOT_DIR = path.resolve(__dirname, '..');
 const SRC_DIR = path.resolve(ROOT_DIR, 'src');
 const DIST_DIR = path.resolve(ROOT_DIR, 'dist');
 const API_DIR = path.resolve(ROOT_DIR, 'api');
+const API_SRC_DIR = path.resolve(SRC_DIR, 'api');
 const PUBLIC_DIR = path.resolve(ROOT_DIR, 'public');
 const UI_SRC_DIR = path.resolve(SRC_DIR, 'ui');
 const UI_DIST_DIR = path.resolve(DIST_DIR, 'ui');
@@ -65,26 +66,34 @@ async function build() {
     },
   });
 
-  // 4. Bundle Vercel Serverless Function entry points (api/*.ts -> dist/api/*.js)
-  console.log(`[BUILD] Bundling Vercel serverless adapters (api/*.ts -> dist/api/*.js)...`);
+  // 4. Bundle Vercel Serverless Function entry points (src/api/*.ts -> api/*.js and dist/api/*.js)
+  console.log(`[BUILD] Bundling Vercel serverless adapters (src/api/*.ts -> api/*.js and dist/api/*.js)...`);
+  fs.mkdirSync(API_DIR, { recursive: true });
   const apiEntryPoints = ['index.ts', 'health.ts', 'sources.ts', 'recommendation.ts', 'transaction-review.ts'];
   for (const entry of apiEntryPoints) {
     const entryName = entry.replace(/\.ts$/, '.js');
+    const srcFile = path.join(API_SRC_DIR, entry);
+    const outFileApi = path.join(API_DIR, entryName);
+    const outFileDist = path.join(API_DIST_DIR, entryName);
     await esbuild.build({
-      entryPoints: [path.join(API_DIR, entry)],
+      entryPoints: [srcFile],
       bundle: true,
       platform: 'node',
       target: 'node22',
       format: 'esm',
-      outfile: path.join(API_DIST_DIR, entryName),
-      sourcemap: true,
+      outfile: outFileApi,
+      sourcemap: false,
       packages: 'external',
       banner: {
         js: `// Pharos Yield Optimizer - Vercel Serverless Function (${entry})\n// Chain ID: 1672 (Pharos Pacific Mainnet) | Mode: Strictly Read-Only\n`,
       },
     });
-    const stats = fs.statSync(path.join(API_DIST_DIR, entryName));
-    console.log(`  - dist/api/${entryName} (${stats.size} bytes)`);
+    fs.copyFileSync(outFileApi, outFileDist);
+    if (fs.existsSync(outFileApi + '.map')) {
+      fs.copyFileSync(outFileApi + '.map', outFileDist + '.map');
+    }
+    const stats = fs.statSync(outFileApi);
+    console.log(`  - api/${entryName} & dist/api/${entryName} (${stats.size} bytes)`);
   }
 
   // 5. Synchronize static UI assets to dist/ui/ and public/

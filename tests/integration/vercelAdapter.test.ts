@@ -9,11 +9,11 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
-import handler, { router } from '../../api/index.ts';
-import healthHandler from '../../api/health.ts';
-import sourcesHandler from '../../api/sources.ts';
-import recommendationHandler from '../../api/recommendation.ts';
-import transactionReviewHandler from '../../api/transaction-review.ts';
+import handler, { router } from '../../src/api/index.ts';
+import healthHandler from '../../src/api/health.ts';
+import sourcesHandler from '../../src/api/sources.ts';
+import recommendationHandler from '../../src/api/recommendation.ts';
+import transactionReviewHandler from '../../src/api/transaction-review.ts';
 import { PharosRpcClient } from '../../src/rpc/pharosClient.ts';
 
 // Mock Serverless Request

@@ -15,12 +15,12 @@ const ROOT_DIR = path.resolve(__dirname, '..');
 const PUBLIC_DIR = path.resolve(ROOT_DIR, 'public');
 const VERCEL_CONFIG_PATH = path.resolve(ROOT_DIR, 'vercel.json');
 
-// Import the modular Vercel Serverless Function handlers
-const { default: indexHandler, router } = await import('../api/index.ts');
-const { default: healthHandler } = await import('../api/health.ts');
-const { default: sourcesHandler } = await import('../api/sources.ts');
-const { default: recommendationHandler } = await import('../api/recommendation.ts');
-const { default: transactionReviewHandler } = await import('../api/transaction-review.ts');
+// Import the bundled Vercel Serverless Function handlers
+const { default: indexHandler, router } = await import('../api/index.js');
+const { default: healthHandler } = await import('../api/health.js');
+const { default: sourcesHandler } = await import('../api/sources.js');
+const { default: recommendationHandler } = await import('../api/recommendation.js');
+const { default: transactionReviewHandler } = await import('../api/transaction-review.js');
 
 // Load vercel.json
 const vercelConfig = JSON.parse(fs.readFileSync(VERCEL_CONFIG_PATH, 'utf-8'));

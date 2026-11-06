@@ -7,8 +7,8 @@
  */
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { ApiRouter } from '../src/server/router.ts';
-import { loadConfig } from '../src/config/index.ts';
+import { ApiRouter } from '../server/router.ts';
+import { loadConfig } from '../config/index.ts';
 
 // Warm container singleton initialization across invocations
 const config = loadConfig();

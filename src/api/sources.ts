@@ -18,5 +18,18 @@ export default async function sourcesHandler(req: IncomingMessage, res: ServerRe
   }
 
   req.url = '/api/sources';
-  await router.handleRequest(req, res);
+  try {
+    await router.handleRequest(req, res);
+  } catch (err) {
+    if (!res.headersSent) {
+      res.statusCode = 500;
+      res.setHeader('Content-Type', 'application/json');
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      res.end(JSON.stringify({
+        error: 'Internal Server Error',
+        message: err instanceof Error ? err.message : 'Unexpected server error inspecting yield sources',
+        status: 'error',
+      }));
+    }
+  }
 }

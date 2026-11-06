@@ -140,6 +140,59 @@ function debounceEvaluate() {
   }, 300);
 }
 
+// Data Fetching Helpers
+/**
+ * Safely fetches and parses JSON from an API endpoint with robust error handling.
+ * Validates HTTP status and Content-Type before parsing JSON.
+ * Distinguishes server/infrastructure errors from RPC errors.
+ */
+async function fetchJson(url, options = {}) {
+  let res;
+  try {
+    res = await fetch(url, options);
+  } catch (netErr) {
+    throw new Error(`Network request failed: ${netErr.message || 'Unable to reach host'}`);
+  }
+
+  const contentType = res.headers.get('content-type') || '';
+  const isJson = contentType.includes('application/json');
+
+  if (!res.ok) {
+    if (isJson) {
+      try {
+        const errData = await res.json();
+        const msg = errData.message || errData.error || `Server error HTTP ${res.status}`;
+        const error = new Error(msg);
+        error.status = res.status;
+        error.data = errData;
+        throw error;
+      } catch (parseErr) {
+        if (parseErr.status) throw parseErr;
+        throw new Error(`Server returned error HTTP ${res.status} (${res.statusText || 'Error'})`);
+      }
+    } else {
+      // Non-JSON error (e.g. Vercel plain text or HTML error page)
+      const text = await res.text().catch(() => '');
+      const sanitized = text.length > 100 ? text.slice(0, 100) + '...' : text;
+      const error = new Error(`Server error HTTP ${res.status}${sanitized ? ': ' + sanitized.trim() : ''}`);
+      error.status = res.status;
+      throw error;
+    }
+  }
+
+  if (!isJson) {
+    const text = await res.text().catch(() => '');
+    const sanitized = text.length > 80 ? text.slice(0, 80) + '...' : text;
+    throw new Error(`Unexpected server response (expected JSON, got "${contentType || 'unknown'}": ${sanitized.trim()})`);
+  }
+
+  try {
+    return await res.json();
+  } catch (jsonErr) {
+    throw new Error(`Malformed JSON response from server: ${jsonErr.message}`);
+  }
+}
+
 // Data Fetching
 async function refreshAll() {
   await Promise.all([
@@ -151,8 +204,7 @@ async function refreshAll() {
 
 async function refreshHealth() {
   try {
-    const res = await fetch('/api/health');
-    const data = await res.json();
+    const data = await fetchJson('/api/health');
     state.health = data;
 
     if (data.status === 'healthy') {
@@ -167,29 +219,36 @@ async function refreshHealth() {
         : `<span class="badge badge-danger">Stale (${data.ageSeconds}s ago)</span>`;
       lastRefreshVal.textContent = new Date().toLocaleTimeString();
     } else {
-      rpcStatusVal.textContent = 'Degraded / Error';
-      rpcStatusVal.className = 'val text-danger';
+      rpcStatusVal.textContent = 'RPC Unhealthy / Stale';
+      rpcStatusVal.className = 'val text-warning';
       networkDot.className = 'status-dot degraded';
-      freshnessVal.innerHTML = `<span class="badge badge-danger">Unavailable</span>`;
+      freshnessVal.innerHTML = `<span class="badge badge-danger">Degraded</span>`;
     }
   } catch (err) {
-    rpcStatusVal.textContent = 'Unreachable';
-    rpcStatusVal.className = 'val text-danger';
-    networkDot.className = 'status-dot degraded';
-    freshnessVal.innerHTML = `<span class="badge badge-danger">Offline</span>`;
+    const isServerErr = err.status >= 500 || (err.message && err.message.includes('Server error HTTP'));
+    if (isServerErr) {
+      rpcStatusVal.textContent = `API Error (HTTP ${err.status || 500})`;
+      rpcStatusVal.className = 'val text-danger';
+      networkDot.className = 'status-dot degraded';
+      freshnessVal.innerHTML = `<span class="badge badge-danger">API Unavailable</span>`;
+    } else {
+      rpcStatusVal.textContent = 'Connection Error';
+      rpcStatusVal.className = 'val text-danger';
+      networkDot.className = 'status-dot degraded';
+      freshnessVal.innerHTML = `<span class="badge badge-danger">Offline</span>`;
+    }
   }
 }
 
 async function refreshSources() {
   try {
-    const res = await fetch('/api/sources');
-    const data = await res.json();
+    const data = await fetchJson('/api/sources');
     state.sources = data.sources || [];
     state.invariantNotice = data.invariantNotice || null;
 
     renderSources();
   } catch (err) {
-    sourcesList.innerHTML = `<div class="error-msg">Failed to load protocol sources: ${err.message}</div>`;
+    sourcesList.innerHTML = `<div class="error-msg">${escapeHtml(err.message)}</div>`;
   }
 }
 
@@ -251,19 +310,18 @@ async function evaluateScenario() {
   try {
     decisionBadgeContainer.innerHTML = `<span class="decision-badge badge-loading">COMPUTING...</span>`;
 
-    const res = await fetch('/api/recommendation', {
+    const data = await fetchJson('/api/recommendation', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(state.scenario),
     });
 
-    const data = await res.json();
     state.currentRecommendation = data;
     renderRecommendation(data);
   } catch (err) {
     decisionBadgeContainer.innerHTML = `<span class="decision-badge badge-insufficient">ERROR</span>`;
     netAlphaVal.textContent = '— PROS';
-    netAlphaSubtext.textContent = 'Failed to execute engine evaluation';
+    netAlphaSubtext.textContent = 'Engine evaluation temporarily unavailable';
     reasonsList.innerHTML = `<li>${escapeHtml(err.message)}</li>`;
     openReviewerBtn.disabled = true;
   } finally {
@@ -334,7 +392,7 @@ async function openTransactionReviewer() {
 
   try {
     const targetStrategyId = state.currentRecommendation.recommendation.targetStrategyId;
-    const res = await fetch('/api/transaction-review', {
+    const report = await fetchJson('/api/transaction-review', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -343,7 +401,6 @@ async function openTransactionReviewer() {
       }),
     });
 
-    const report = await res.json();
     renderReviewerModal(report);
   } catch (err) {
     reviewerModalBody.innerHTML = `<div class="error-msg">Failed to prepare review: ${escapeHtml(err.message)}</div>`;
