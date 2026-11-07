@@ -9,7 +9,7 @@
 export const DEFAULT_PHAROS_RPC = 'https://rpc.pharos.xyz';
 export const EXPECTED_CHAIN_ID = 1672;
 export const EXPECTED_CHAIN_HEX = '0x688';
-export const DEFAULT_TIMEOUT_MS = 8_000;
+export const DEFAULT_TIMEOUT_MS = 15_000;
 export const DEFAULT_MAX_RETRIES = 3;
 export const STALE_DATA_THRESHOLD_SECONDS = 600; // 10 minutes
 export const DEFAULT_CACHE_TTL_MS = 3_000; // 3 seconds short-lived cache for serverless RPC protection

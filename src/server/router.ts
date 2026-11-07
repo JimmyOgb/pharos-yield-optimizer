@@ -343,6 +343,14 @@ export class ApiRouter {
 
       // Extract accurate friction evaluated by the engine (no hardcoded gas numbers)
       const estimatedGasCostPros = targetProj ? scaledToDecimal(targetProj.friction.gasCostWei) : entryGasCostPros;
+      const nonGasFeeCostPros = targetProj
+        ? scaledToDecimal(
+            targetProj.friction.entryFeeWei +
+            targetProj.friction.exitFeeWei +
+            targetProj.friction.swapFeeWei +
+            targetProj.friction.slippageCostWei
+          )
+        : 0;
       const frictionCostPros = targetProj ? targetProj.friction.totalFrictionPros : estimatedGasCostPros;
       const breakEvenDays = rec.breakEvenDays;
       const breakEvenFormatted = formatBreakEvenDuration(breakEvenDays);
@@ -359,7 +367,9 @@ export class ApiRouter {
           projectedNetGainFormatted: `${projectedNetGainPros.toFixed(6)} PROS`,
           projectedNetGainPros,
           estimatedGasCostPros: estimatedGasCostPros.toFixed(6),
+          protocolFeeCostPros: nonGasFeeCostPros.toFixed(6),
           frictionCostPros: frictionCostPros.toFixed(6),
+          totalLifecycleCostPros: frictionCostPros.toFixed(6),
           breakEvenDays,
           breakEvenFormatted,
           minimumHoldingDays: rec.targetStrategyId === 'faroo-patient-staking' ? 14 : 0,
@@ -386,16 +396,21 @@ export class ApiRouter {
             provenance: 'LIVE_ONCHAIN_PACIFIC_MAINNET',
             caching: 'Short-lived in-memory cache (3,000ms TTL) applied to JSON-RPC reads to safeguard Pacific Mainnet RPC during burst execution; not long-term storage.',
             invariantNotice: 'FEWER_THAN_THREE_QUALIFYING_SOURCES: Requirement not met (1 verified on-chain, 0 execution alternatives counted toward requirement).',
+            singleSourceNotice: 'Limited scope: Recommendation compares 1 qualifying on-chain source (Faroo stPROS) against Native PROS holding benchmark. Acceptance requirement of 3 qualifying sources is NOT MET.',
             dexExitNotice: 'Faroo instant DEX exit is classified strictly as an EXECUTION ALTERNATIVE with 0.30% pool fee + slippage, NOT an independent yield source. Instant exit swap gas (145k) is an empirical benchmark assumption, not a live measured receipt.',
-            lifecycleUnification: 'Unified 265,000-gas physical lifecycle: 180,000 gas ERC-4626 entry (Wrap 45k + Approve 45k + Deposit 90k) + 85,000 gas unbonding queue exit.',
+            lifecycleUnification: 'Unified 265,000-gas physical lifecycle: 180,000 gas ERC-4626 entry (Wrap 45k + Approve 45k + Deposit 90k) + 85,000 gas unbonding queue exit. Deducted once from gross yield.',
+            breakEvenNotice: 'Yield Accrual Break-Even indicates elapsed time to earn yield equal to transaction gas; it does NOT bypass the mandatory 14-day protocol unbonding queue.',
             yieldAssumptionNotice: 'Illustrative yield assumption: 8.5% annualized. This is a model input for scenario calculations, not a verified current or forward APY. Actual yield may differ.',
           },
           reasons: [
             rec.explanation,
-            `Strict Acceptance Status: ${rec.verifiedQualifyingSourcesCount} of 3 qualifying sources verified on-chain.`,
+            `Strict Acceptance Status: ${rec.verifiedQualifyingSourcesCount} of 3 qualifying sources verified on-chain. Single-source evaluation scope.`,
             rec.decision === 'MOVE'
-              ? `Positive net alpha (+${projectedNetGainPros.toFixed(6)} PROS) expected after full lifecycle gas (${estimatedGasCostPros.toFixed(6)} PROS) and friction.`
+              ? `Projected Net Advantage: +${projectedNetGainPros.toFixed(6)} PROS over holding baseline PROS after deducting single lifecycle cost of ${frictionCostPros.toFixed(6)} PROS (${estimatedGasCostPros.toFixed(6)} PROS gas + ${nonGasFeeCostPros.toFixed(6)} PROS protocol fees).`
               : `Moving capital is not recommended under selected scenario parameters.`,
+            isPatientStaking
+              ? `Yield Accrual Break-Even: ${breakEvenFormatted} to recover gas cost from yield. Principal withdrawal remains subject to the 14-day protocol unbonding queue.`
+              : `Break-Even: ${breakEvenFormatted} under instant liquidity trading conditions.`,
             'Illustrative yield assumption: 8.5% annualized. This is a model input for scenario calculations, not a verified current or forward APY. Actual yield may differ.',
           ],
         },
@@ -422,9 +437,9 @@ export class ApiRouter {
 
       const strategyId = body.strategyId ?? 'faroo-patient-staking';
       const amountPros = typeof body.amountPros === 'number' && body.amountPros > 0 ? body.amountPros : 1000;
-      const userAddress = body.userAddress && /^0x[a-fA-F0-9]{40}$/.test(body.userAddress)
-        ? body.userAddress
-        : '0x0000000000000000000000000000000000000000';
+      const userAddress = typeof body.userAddress === 'string' && body.userAddress.trim() !== ''
+        ? body.userAddress.trim()
+        : undefined;
 
       const gasPrice = await this.rpcClient.getGasPrice();
       const block = await this.rpcClient.getLatestBlockHeader();

@@ -6,7 +6,7 @@
 var DEFAULT_PHAROS_RPC = "https://rpc.pharos.xyz";
 var EXPECTED_CHAIN_ID = 1672;
 var EXPECTED_CHAIN_HEX = "0x688";
-var DEFAULT_TIMEOUT_MS = 8e3;
+var DEFAULT_TIMEOUT_MS = 15e3;
 var DEFAULT_MAX_RETRIES = 3;
 var STALE_DATA_THRESHOLD_SECONDS = 600;
 var DEFAULT_CACHE_TTL_MS = 3e3;
@@ -374,6 +374,23 @@ var PharosDexAdapter = class {
   }
 };
 
+// src/types/index.ts
+var CANONICAL_CONTRACTS = {
+  FAROO_STPROS: "0x6b0A44c64190279f7034b77c13a566E914FE5Ec4",
+  FAROO_IMPLEMENTATION: "0xfd59860894e01773e9780b0d1dfae4ca2b56708d",
+  CANONICAL_WPROS: "0x52C48d4213107b20bC583832b0d951FB9CA8F0B0",
+  AXIL_CORE_VAULT: "0xD0428799FbC35557834d33121BA4472692c8908a",
+  AXIL_APC3M_TOKEN: "0xEC47E6f3EF1E7bc8e00F670aC3d5016798Fe44d0",
+  DEX_POOL_MANAGER: "0xD681e96AD464f8F7F7fa7e1E0c5a367175E44550",
+  DEX_STATE_VIEW: "0x616434e941c5E53d44894bF9ca13D517927BF8aF"
+};
+var NETWORK_CONFIG = {
+  chainId: 1672,
+  name: "Pharos Pacific Mainnet",
+  nativeCurrency: { name: "Pharos PROS", symbol: "PROS", decimals: 18 },
+  rpcUrl: "https://rpc.pharos.xyz"
+};
+
 // src/engine/frictionModel.ts
 var GAS_LIMITS = {
   // Physical ERC-4626 Entry Sequence (180,000 gas units verified)
@@ -550,7 +567,7 @@ var STRATEGY_PROFILES = {
     classification: "BASELINE_ONLY",
     qualifiesTowardReq01: false,
     // 0.00% Benchmark
-    contractAddress: "0x52C46eD4e803a647000e5aA6145B1c110996D872",
+    contractAddress: CANONICAL_CONTRACTS.CANONICAL_WPROS,
     lockupPeriodDays: 0,
     exitDelayDays: 0,
     exitFeeBps: 0,
@@ -789,31 +806,47 @@ var LiveRecommendationBridge = class {
   }
 };
 
-// src/types/index.ts
-var CANONICAL_CONTRACTS = {
-  FAROO_STPROS: "0x6b0A44c64190279f7034b77c13a566E914FE5Ec4",
-  FAROO_IMPLEMENTATION: "0xfd59860894e01773e9780b0d1dfae4ca2b56708d",
-  CANONICAL_WPROS: "0x52C48d4213107b20bC583832b0d951FB9CA8F0B0",
-  AXIL_CORE_VAULT: "0xD0428799FbC35557834d33121BA4472692c8908a",
-  AXIL_APC3M_TOKEN: "0xEC47E6f3EF1E7bc8e00F670aC3d5016798Fe44d0",
-  DEX_POOL_MANAGER: "0xD681e96AD464f8F7F7fa7e1E0c5a367175E44550",
-  DEX_STATE_VIEW: "0x616434e941c5E53d44894bF9ca13D517927BF8aF"
-};
-var NETWORK_CONFIG = {
-  chainId: 1672,
-  name: "Pharos Pacific Mainnet",
-  nativeCurrency: { name: "Pharos PROS", symbol: "PROS", decimals: 18 },
-  rpcUrl: "https://rpc.pharos.xyz"
-};
-
 // src/reviewer/transactionReviewer.ts
 var TransactionReviewer = class {
+  /**
+   * Validates a recipient EVM address for chain compatibility (Chain ID 1672)
+   * Rejects missing, malformed, and zero addresses.
+   */
+  static validateReceiverAddress(address) {
+    if (address === void 0 || address === null || typeof address !== "string" || address.trim() === "") {
+      return {
+        isValid: false,
+        status: "MISSING",
+        error: "Receiver address was not provided."
+      };
+    }
+    const trimmed = address.trim();
+    if (!/^0x[a-fA-F0-9]{40}$/.test(trimmed)) {
+      return {
+        isValid: false,
+        status: "INVALID_FORMAT",
+        error: "Invalid address syntax: must be 0x followed by exactly 40 hexadecimal characters."
+      };
+    }
+    if (/^0x0{40}$/i.test(trimmed)) {
+      return {
+        isValid: false,
+        status: "INVALID_ZERO_ADDRESS",
+        error: "Zero address (0x0000...0000) is rejected as a receiver. Cannot mint shares to address(0)."
+      };
+    }
+    return {
+      isValid: true,
+      status: "VALID",
+      normalizedAddress: trimmed
+    };
+  }
   /**
    * Left-pads a 20-byte address to a 32-byte EVM ABI word
    */
   static encodeAddressParam(address) {
     const clean = address.toLowerCase().replace(/^0x/, "");
-    if (clean.length !== 40) {
+    if (clean.length !== 40 || !/^[a-f0-9]{40}$/.test(clean)) {
       throw new Error(`Invalid address length: expected 40 hex chars, got ${clean.length}`);
     }
     return clean.padStart(64, "0");
@@ -831,7 +864,7 @@ var TransactionReviewer = class {
    * Generates a non-custodial transaction review for a given strategy and scenario.
    */
   static generateReview(params) {
-    const { strategyId, amountPros, userAddress = "0x0000000000000000000000000000000000000000" } = params;
+    const { strategyId, amountPros, userAddress } = params;
     const gasPriceWei = params.gasPriceWei ?? 10000000000n;
     const gasPriceGwei = (Number(gasPriceWei) / 1e9).toFixed(2);
     const amountWei = decimalToWei(amountPros);
@@ -857,9 +890,59 @@ var TransactionReviewer = class {
    * Step 3: Call deposit(uint256 assets, address receiver) on Faroo vault.
    */
   static reviewFarooStaking(amountPros, amountWei, userAddress, gasPriceWei, gasPriceGwei) {
+    const validation = this.validateReceiverAddress(userAddress);
     const totalGasLimit = 180000n;
     const gasCostWei = totalGasLimit * gasPriceWei;
     const gasCostPros = (Number(gasCostWei) / 1e18).toFixed(6);
+    const step3Parameters = [
+      {
+        name: "assets",
+        type: "uint256",
+        value: amountWei.toString(),
+        formatted: `${amountPros.toLocaleString()} WPROS`
+      },
+      {
+        name: "receiver",
+        type: "address",
+        value: validation.isValid ? validation.normalizedAddress : userAddress || "",
+        formatted: validation.isValid ? validation.normalizedAddress : validation.status === "MISSING" ? "NOT SET (Action Required: Provide your Pacific Mainnet address)" : validation.status === "INVALID_ZERO_ADDRESS" ? "REJECTED: 0x0000...0000 (Zero address placeholder rejected)" : `REJECTED: ${userAddress} (Malformed address syntax)`
+      }
+    ];
+    const step3Risks = [
+      "Mandatory unbonding delay: Contract on-chain parameter unbondingPeriod = 86,400s (1 day); protocol unbonding queue may take up to 14 days.",
+      "Yield compounds into exchange rate (stPROS/PROS increases over time). Token quantity in wallet remains constant."
+    ];
+    if (!validation.isValid) {
+      if (validation.status === "INVALID_ZERO_ADDRESS" || validation.status === "MISSING") {
+        step3Risks.push("ACTION REQUIRED: Receiver parameter is currently set to placeholder address (0x0000...0000) or missing. You MUST replace this parameter with your external wallet address in your Web3 wallet or script so minted stPROS shares are delivered to your account.");
+      } else {
+        step3Risks.push(`ACTION REQUIRED: Receiver address is malformed (${validation.error}). Receiver-dependent calldata cannot be prepared or exported.`);
+      }
+    }
+    const step3Review = {
+      stepNumber: 3,
+      title: "Deposit WPROS into Faroo Liquid Staking Vault",
+      contractName: "Faroo Liquid Staked PROS (stPROS)",
+      contractAddress: CANONICAL_CONTRACTS.FAROO_STPROS,
+      methodName: "deposit(uint256,address)",
+      selector: "0x6e553f65",
+      isAbiVerified: true,
+      explanation: "Deposits WPROS into the Faroo ERC-4626 vault and mints yield-bearing stPROS shares to the recipient address.",
+      parameters: step3Parameters,
+      payloadStatus: validation.isValid ? "AVAILABLE" : "INCOMPLETE",
+      payload: validation.isValid ? {
+        to: CANONICAL_CONTRACTS.FAROO_STPROS,
+        data: `0x6e553f65${this.encodeUint256Param(amountWei)}${this.encodeAddressParam(validation.normalizedAddress)}`,
+        value: "0x0",
+        gasLimit: "0x15f90",
+        // 90,000
+        maxFeePerGas: `0x${gasPriceWei.toString(16)}`,
+        maxPriorityFeePerGas: `0x${gasPriceWei.toString(16)}`,
+        chainId: NETWORK_CONFIG.chainId
+      } : void 0,
+      unavailabilityReason: validation.isValid ? void 0 : validation.status === "MISSING" ? "CALLDATA_INCOMPLETE: Receiver address was not provided. A valid non-zero Pacific Mainnet recipient address is required before receiver-dependent calldata can be generated or exported." : validation.status === "INVALID_ZERO_ADDRESS" ? "CALLDATA_INCOMPLETE: Zero address (0x0000...0000) is rejected as a receiver. Cannot mint shares to null address." : `CALLDATA_INCOMPLETE: Malformed receiver address syntax (${validation.error}). Expected 0x followed by 40 hex characters.`,
+      risksAndConstraints: step3Risks
+    };
     const steps = [
       {
         stepNumber: 1,
@@ -925,45 +1008,7 @@ var TransactionReviewer = class {
           "Standard ERC-20 approval pattern. Recommended to approve exact amount only to minimize allowance risk."
         ]
       },
-      {
-        stepNumber: 3,
-        title: "Deposit WPROS into Faroo Liquid Staking Vault",
-        contractName: "Faroo Liquid Staked PROS (stPROS)",
-        contractAddress: CANONICAL_CONTRACTS.FAROO_STPROS,
-        methodName: "deposit(uint256,address)",
-        selector: "0x6e553f65",
-        isAbiVerified: true,
-        explanation: "Deposits WPROS into the Faroo ERC-4626 vault and mints yield-bearing stPROS shares to the recipient address.",
-        parameters: [
-          {
-            name: "assets",
-            type: "uint256",
-            value: amountWei.toString(),
-            formatted: `${amountPros.toLocaleString()} WPROS`
-          },
-          {
-            name: "receiver",
-            type: "address",
-            value: userAddress,
-            formatted: userAddress
-          }
-        ],
-        payloadStatus: "AVAILABLE",
-        payload: {
-          to: CANONICAL_CONTRACTS.FAROO_STPROS,
-          data: `0x6e553f65${this.encodeUint256Param(amountWei)}${this.encodeAddressParam(userAddress)}`,
-          value: "0x0",
-          gasLimit: "0x15f90",
-          // 90,000
-          maxFeePerGas: `0x${gasPriceWei.toString(16)}`,
-          maxPriorityFeePerGas: `0x${gasPriceWei.toString(16)}`,
-          chainId: NETWORK_CONFIG.chainId
-        },
-        risksAndConstraints: [
-          "Mandatory unbonding delay: Contract on-chain parameter unbondingPeriod = 86,400s (1 day); protocol unbonding queue may take up to 14 days.",
-          "Yield compounds into exchange rate (stPROS/PROS increases over time). Token quantity in wallet remains constant."
-        ]
-      }
+      step3Review
     ];
     return {
       timestamp: Date.now(),
@@ -973,6 +1018,9 @@ var TransactionReviewer = class {
       estimatedGasCostWei: gasCostWei.toString(),
       estimatedGasCostPros: gasCostPros,
       gasPriceGwei,
+      receiverStatus: validation.status,
+      receiverAddress: validation.isValid ? validation.normalizedAddress : void 0,
+      isReadyForExternalReview: validation.isValid,
       steps,
       safetyNotice: {
         isNonCustodial: true,
@@ -1010,6 +1058,8 @@ var TransactionReviewer = class {
       estimatedGasCostWei: "0",
       estimatedGasCostPros: "0.000000",
       gasPriceGwei: "0.00",
+      receiverStatus: "MISSING",
+      isReadyForExternalReview: false,
       steps: [
         {
           stepNumber: 1,
@@ -1051,6 +1101,8 @@ var TransactionReviewer = class {
       estimatedGasCostWei: "0",
       estimatedGasCostPros: "0.000000",
       gasPriceGwei: "0.00",
+      receiverStatus: "MISSING",
+      isReadyForExternalReview: false,
       steps: [
         {
           stepNumber: 1,
@@ -1358,6 +1410,9 @@ var ApiRouter = class {
       const modeledGasUnits = isPatientStaking ? 265e3 : isInstantDex ? 325e3 : 0;
       const entryGasCostPros = entryGasUnits * gasPriceGwei / 1e9;
       const estimatedGasCostPros = targetProj ? scaledToDecimal(targetProj.friction.gasCostWei) : entryGasCostPros;
+      const nonGasFeeCostPros = targetProj ? scaledToDecimal(
+        targetProj.friction.entryFeeWei + targetProj.friction.exitFeeWei + targetProj.friction.swapFeeWei + targetProj.friction.slippageCostWei
+      ) : 0;
       const frictionCostPros = targetProj ? targetProj.friction.totalFrictionPros : estimatedGasCostPros;
       const breakEvenDays = rec.breakEvenDays;
       const breakEvenFormatted = formatBreakEvenDuration(breakEvenDays);
@@ -1373,7 +1428,9 @@ var ApiRouter = class {
           projectedNetGainFormatted: `${projectedNetGainPros.toFixed(6)} PROS`,
           projectedNetGainPros,
           estimatedGasCostPros: estimatedGasCostPros.toFixed(6),
+          protocolFeeCostPros: nonGasFeeCostPros.toFixed(6),
           frictionCostPros: frictionCostPros.toFixed(6),
+          totalLifecycleCostPros: frictionCostPros.toFixed(6),
           breakEvenDays,
           breakEvenFormatted,
           minimumHoldingDays: rec.targetStrategyId === "faroo-patient-staking" ? 14 : 0,
@@ -1396,14 +1453,17 @@ var ApiRouter = class {
             provenance: "LIVE_ONCHAIN_PACIFIC_MAINNET",
             caching: "Short-lived in-memory cache (3,000ms TTL) applied to JSON-RPC reads to safeguard Pacific Mainnet RPC during burst execution; not long-term storage.",
             invariantNotice: "FEWER_THAN_THREE_QUALIFYING_SOURCES: Requirement not met (1 verified on-chain, 0 execution alternatives counted toward requirement).",
+            singleSourceNotice: "Limited scope: Recommendation compares 1 qualifying on-chain source (Faroo stPROS) against Native PROS holding benchmark. Acceptance requirement of 3 qualifying sources is NOT MET.",
             dexExitNotice: "Faroo instant DEX exit is classified strictly as an EXECUTION ALTERNATIVE with 0.30% pool fee + slippage, NOT an independent yield source. Instant exit swap gas (145k) is an empirical benchmark assumption, not a live measured receipt.",
-            lifecycleUnification: "Unified 265,000-gas physical lifecycle: 180,000 gas ERC-4626 entry (Wrap 45k + Approve 45k + Deposit 90k) + 85,000 gas unbonding queue exit.",
+            lifecycleUnification: "Unified 265,000-gas physical lifecycle: 180,000 gas ERC-4626 entry (Wrap 45k + Approve 45k + Deposit 90k) + 85,000 gas unbonding queue exit. Deducted once from gross yield.",
+            breakEvenNotice: "Yield Accrual Break-Even indicates elapsed time to earn yield equal to transaction gas; it does NOT bypass the mandatory 14-day protocol unbonding queue.",
             yieldAssumptionNotice: "Illustrative yield assumption: 8.5% annualized. This is a model input for scenario calculations, not a verified current or forward APY. Actual yield may differ."
           },
           reasons: [
             rec.explanation,
-            `Strict Acceptance Status: ${rec.verifiedQualifyingSourcesCount} of 3 qualifying sources verified on-chain.`,
-            rec.decision === "MOVE" ? `Positive net alpha (+${projectedNetGainPros.toFixed(6)} PROS) expected after full lifecycle gas (${estimatedGasCostPros.toFixed(6)} PROS) and friction.` : `Moving capital is not recommended under selected scenario parameters.`,
+            `Strict Acceptance Status: ${rec.verifiedQualifyingSourcesCount} of 3 qualifying sources verified on-chain. Single-source evaluation scope.`,
+            rec.decision === "MOVE" ? `Projected Net Advantage: +${projectedNetGainPros.toFixed(6)} PROS over holding baseline PROS after deducting single lifecycle cost of ${frictionCostPros.toFixed(6)} PROS (${estimatedGasCostPros.toFixed(6)} PROS gas + ${nonGasFeeCostPros.toFixed(6)} PROS protocol fees).` : `Moving capital is not recommended under selected scenario parameters.`,
+            isPatientStaking ? `Yield Accrual Break-Even: ${breakEvenFormatted} to recover gas cost from yield. Principal withdrawal remains subject to the 14-day protocol unbonding queue.` : `Break-Even: ${breakEvenFormatted} under instant liquidity trading conditions.`,
             "Illustrative yield assumption: 8.5% annualized. This is a model input for scenario calculations, not a verified current or forward APY. Actual yield may differ."
           ]
         }
@@ -1423,7 +1483,7 @@ var ApiRouter = class {
       const body = await this.readJsonBody(req);
       const strategyId = body.strategyId ?? "faroo-patient-staking";
       const amountPros = typeof body.amountPros === "number" && body.amountPros > 0 ? body.amountPros : 1e3;
-      const userAddress = body.userAddress && /^0x[a-fA-F0-9]{40}$/.test(body.userAddress) ? body.userAddress : "0x0000000000000000000000000000000000000000";
+      const userAddress = typeof body.userAddress === "string" && body.userAddress.trim() !== "" ? body.userAddress.trim() : void 0;
       const gasPrice = await this.rpcClient.getGasPrice();
       const block = await this.rpcClient.getLatestBlockHeader();
       const review = TransactionReviewer.generateReview({

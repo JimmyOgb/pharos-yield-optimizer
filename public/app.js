@@ -11,6 +11,7 @@ const state = {
   sources: [],
   invariantNotice: null,
   currentRecommendation: null,
+  receiverAddress: '',
   scenario: {
     principalPros: 1000,
     horizonDays: 60,
@@ -284,7 +285,7 @@ function renderSources() {
 
         <div class="source-grid">
           <div class="source-metric">
-            <span class="source-metric-label">Observed Rate / APR</span>
+            <span class="source-metric-label">${src.liveRateUnit && src.liveRateUnit.includes('per') ? 'On-Chain Spot Rate' : 'Advertised / Target APY'}</span>
             <span class="source-metric-val font-mono">${escapeHtml(src.liveRate)} <small class="text-dim">${escapeHtml(src.liveRateUnit)}</small></span>
           </div>
           <div class="source-metric">
@@ -359,7 +360,14 @@ function renderRecommendation(data) {
 
   // Render Stats
   gasCostEstVal.textContent = `${rec.estimatedGasCostPros} PROS`;
-  frictionCostVal.textContent = `${rec.frictionCostPros} PROS`;
+  if (rec.protocolFeeCostPros !== undefined) {
+    const feeNum = Number(rec.protocolFeeCostPros);
+    frictionCostVal.textContent = feeNum === 0 ? '0.000000 PROS (0%)' : `${rec.protocolFeeCostPros} PROS`;
+  } else if (rec.targetStrategyId === 'faroo-patient-staking') {
+    frictionCostVal.textContent = '0.000000 PROS (0%)';
+  } else {
+    frictionCostVal.textContent = `${rec.frictionCostPros} PROS`;
+  }
   breakEvenVal.textContent = rec.breakEvenFormatted
     || (rec.breakEvenDays === 0
       ? 'Immediate (0 days)'
@@ -382,9 +390,13 @@ function renderRecommendation(data) {
 }
 
 // Transaction Reviewer Modal
-async function openTransactionReviewer() {
+async function openTransactionReviewer(customAddress) {
   if (!state.currentRecommendation || state.currentRecommendation.recommendation.decision !== 'MOVE') {
     return;
+  }
+
+  if (typeof customAddress === 'string') {
+    state.receiverAddress = customAddress.trim();
   }
 
   reviewerModal.style.display = 'flex';
@@ -392,13 +404,18 @@ async function openTransactionReviewer() {
 
   try {
     const targetStrategyId = state.currentRecommendation.recommendation.targetStrategyId;
+    const reqBody = {
+      strategyId: targetStrategyId,
+      amountPros: state.scenario.principalPros,
+    };
+    if (state.receiverAddress) {
+      reqBody.userAddress = state.receiverAddress;
+    }
+
     const report = await fetchJson('/api/transaction-review', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        strategyId: targetStrategyId,
-        amountPros: state.scenario.principalPros,
-      }),
+      body: JSON.stringify(reqBody),
     });
 
     renderReviewerModal(report);
@@ -413,6 +430,52 @@ function renderReviewerModal(report) {
     return;
   }
 
+  let reviewStatusBanner = '';
+  if (report.isReadyForExternalReview) {
+    reviewStatusBanner = `
+      <div style="background: var(--color-success-bg, rgba(16,185,129,0.12)); border: 1px solid var(--color-success, #10b981); border-radius: var(--radius-sm, 6px); padding: 10px 14px; margin-bottom: 14px; display: flex; align-items: center; justify-content: space-between;">
+        <span style="font-size: 12.5px; color: var(--color-success, #10b981); font-weight: 600;">✓ Ready for External Review — All execution steps verified with valid receiver</span>
+        <span class="badge badge-success" style="font-size: 10px;">READY TO EXPORT</span>
+      </div>
+    `;
+  } else {
+    reviewStatusBanner = `
+      <div style="background: var(--color-warning-bg, rgba(245,158,11,0.12)); border: 1px solid var(--color-warning, #f59e0b); border-radius: var(--radius-sm, 6px); padding: 10px 14px; margin-bottom: 14px; display: flex; align-items: center; justify-content: space-between;">
+        <span style="font-size: 12.5px; color: var(--color-warning, #f59e0b); font-weight: 600;">⚠️ Incomplete Calldata — Receiver wallet address required for Step 3</span>
+        <span class="badge badge-warning" style="font-size: 10px;">RECEIVER REQUIRED</span>
+      </div>
+    `;
+  }
+
+  let feedbackText = '';
+  let feedbackColor = 'var(--text-muted)';
+  if (report.receiverStatus === 'VALID') {
+    feedbackText = `✓ Valid Pacific Mainnet address (${escapeHtml(report.receiverAddress || '')}). Calldata is ready for external inspection.`;
+    feedbackColor = 'var(--color-success)';
+  } else if (report.receiverStatus === 'INVALID_ZERO_ADDRESS') {
+    feedbackText = '✗ Rejected: Zero address (0x0000...0000) cannot receive minted stPROS shares. Enter a valid account address.';
+    feedbackColor = 'var(--color-danger)';
+  } else if (report.receiverStatus === 'INVALID_FORMAT') {
+    feedbackText = '✗ Rejected: Malformed address syntax. Expected 0x followed by exactly 40 hex characters.';
+    feedbackColor = 'var(--color-danger)';
+  } else {
+    feedbackText = 'Provide your external Pacific Mainnet address to generate ready-to-use Step 3 calldata for external review.';
+    feedbackColor = 'var(--text-muted)';
+  }
+
+  const receiverInputHtml = `
+    <div style="background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 12px; margin: 12px 0;">
+      <label for="modalReceiverInput" style="display:block; font-size:12px; font-weight:600; margin-bottom:4px; color:var(--text-main);">
+        Recipient Account (Pacific Mainnet address to receive stPROS):
+      </label>
+      <div style="display:flex; gap:8px;">
+        <input type="text" id="modalReceiverInput" placeholder="0x... (Enter 40-character hex wallet address)" value="${escapeHtml(state.receiverAddress || '')}" style="flex:1; padding:6px 10px; font-family:var(--font-mono); font-size:12px; background:var(--bg-input); border:1px solid var(--border-strong); border-radius:var(--radius-sm); color:var(--text-main);" />
+        <button id="applyReceiverBtn" type="button" class="btn btn-secondary" style="font-size:12px; padding:6px 14px; cursor:pointer;">Update Calldata</button>
+      </div>
+      <div id="receiverFeedbackMsg" style="font-size:11px; margin-top:5px; color:${feedbackColor};">${feedbackText}</div>
+    </div>
+  `;
+
   const stepsHtml = report.steps.map(step => {
     let payloadHtml = '';
     if (step.payloadStatus === 'AVAILABLE' && step.payload) {
@@ -425,6 +488,15 @@ function renderReviewerModal(report) {
           <div><strong>Chain ID:</strong> ${escapeHtml(step.payload.chainId.toString())}</div>
           <div style="margin-top:6px;"><strong>Calldata (Raw Hex):</strong></div>
           <div style="font-size:11px; margin-top:2px;">${escapeHtml(step.payload.data)}</div>
+        </div>
+      `;
+    } else if (step.payloadStatus === 'INCOMPLETE') {
+      payloadHtml = `
+        <div class="source-exclusion-box" style="margin: 12px 0; border-left: 3px solid var(--color-warning);">
+          <strong>Calldata Incomplete:</strong> ${escapeHtml(step.unavailabilityReason || 'Receiver address required.')}
+          <div style="margin-top: 4px; font-size: 11.5px; color: var(--text-muted);">
+            Receiver-dependent calldata cannot be copied or exported until a valid Pacific Mainnet recipient address is provided above.
+          </div>
         </div>
       `;
     } else {
@@ -443,13 +515,36 @@ function renderReviewerModal(report) {
             <tr><th>Parameter</th><th>Type</th><th>Value</th></tr>
           </thead>
           <tbody>
-            ${step.parameters.map(p => `
+            ${step.parameters.map(p => {
+              const isReceiver = p.name === 'receiver';
+              let badgeHtml = '';
+              let valClass = 'font-mono';
+              if (isReceiver) {
+                if (report.receiverStatus === 'VALID') {
+                  badgeHtml = '<span class="badge badge-success" style="margin-left:6px; font-size:10px;">Verified Receiver (1672)</span>';
+                  valClass = 'font-mono text-success';
+                } else if (report.receiverStatus === 'INVALID_ZERO_ADDRESS') {
+                  badgeHtml = '<span class="badge badge-danger" style="margin-left:6px; font-size:10px;">Rejected: Zero Address</span>';
+                  valClass = 'font-mono text-danger';
+                } else if (report.receiverStatus === 'INVALID_FORMAT') {
+                  badgeHtml = '<span class="badge badge-danger" style="margin-left:6px; font-size:10px;">Rejected: Malformed Address</span>';
+                  valClass = 'font-mono text-danger';
+                } else {
+                  badgeHtml = '<span class="badge badge-warning" style="margin-left:6px; font-size:10px;">Receiver Required</span>';
+                  valClass = 'font-mono text-warning';
+                }
+              }
+              return `
               <tr>
                 <td><code>${escapeHtml(p.name)}</code></td>
                 <td><code>${escapeHtml(p.type)}</code></td>
-                <td><span class="font-mono">${escapeHtml(p.formatted)}</span></td>
+                <td>
+                  <span class="${valClass}">${escapeHtml(p.formatted)}</span>
+                  ${badgeHtml}
+                </td>
               </tr>
-            `).join('')}
+            `;
+            }).join('')}
           </tbody>
         </table>
       `;
@@ -464,6 +559,15 @@ function renderReviewerModal(report) {
       `;
     }
 
+    let stepBadge = '';
+    if (step.payloadStatus === 'AVAILABLE') {
+      stepBadge = '<span class="badge badge-success">READY FOR REVIEW</span>';
+    } else if (step.payloadStatus === 'INCOMPLETE') {
+      stepBadge = '<span class="badge badge-warning">CALLDATA INCOMPLETE</span>';
+    } else {
+      stepBadge = '<span class="badge badge-danger">ABI UNVERIFIED</span>';
+    }
+
     return `
       <div class="reviewer-step">
         <div class="reviewer-step-header">
@@ -471,9 +575,7 @@ function renderReviewerModal(report) {
             <span class="step-num-badge">${step.stepNumber}</span>
             ${escapeHtml(step.title)}
           </div>
-          <span class="badge ${step.isAbiVerified ? 'badge-success' : 'badge-danger'}">
-            ${step.isAbiVerified ? 'ABI VERIFIED' : 'ABI UNVERIFIED'}
-          </span>
+          ${stepBadge}
         </div>
 
         <div class="step-contract-info">
@@ -493,15 +595,32 @@ function renderReviewerModal(report) {
   }).join('');
 
   reviewerModalBody.innerHTML = `
+    ${reviewStatusBanner}
     <div style="margin-bottom: 16px;">
       <h3 style="font-size: 15px; margin-bottom: 4px;">${escapeHtml(report.strategyName)}</h3>
       <p style="font-size: 13px; color: var(--text-muted);">${escapeHtml(report.actionSummary)}</p>
       <div style="font-size: 12px; color: var(--accent-secondary); margin-top: 6px;">
         Estimated Total Gas: <strong>${escapeHtml(report.estimatedGasCostPros)} PROS</strong> (${escapeHtml(report.gasPriceGwei)} Gwei gas price)
       </div>
+      ${receiverInputHtml}
     </div>
     ${stepsHtml}
   `;
+
+  // Attach listener for applying receiver address
+  const applyBtn = document.getElementById('applyReceiverBtn');
+  const receiverInput = document.getElementById('modalReceiverInput');
+  if (applyBtn && receiverInput) {
+    applyBtn.addEventListener('click', () => {
+      openTransactionReviewer(receiverInput.value);
+    });
+    receiverInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        openTransactionReviewer(receiverInput.value);
+      }
+    });
+  }
 }
 
 function closeTransactionReviewer() {

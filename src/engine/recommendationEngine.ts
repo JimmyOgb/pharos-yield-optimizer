@@ -6,13 +6,14 @@
  * and evidence provenance checks. Never recommends an action based solely on headline APY.
  */
 
-import type {
-  OptimizerQueryInput,
-  OptimizerRecommendation,
-  StrategyId,
-  StrategyProfile,
-  StrategyProjection,
-  ReasonCode,
+import {
+  type OptimizerQueryInput,
+  type OptimizerRecommendation,
+  type StrategyId,
+  type StrategyProfile,
+  type StrategyProjection,
+  type ReasonCode,
+  CANONICAL_CONTRACTS,
 } from '../types/index.ts';
 import {
   calculateGrossProjectedYield,
@@ -66,7 +67,7 @@ export const STRATEGY_PROFILES: Record<StrategyId, StrategyProfile> = {
     denomination: 'PROS',
     classification: 'BASELINE_ONLY',
     qualifiesTowardReq01: false, // 0.00% Benchmark
-    contractAddress: '0x52C46eD4e803a647000e5aA6145B1c110996D872',
+    contractAddress: CANONICAL_CONTRACTS.CANONICAL_WPROS,
     lockupPeriodDays: 0,
     exitDelayDays: 0,
     exitFeeBps: 0,

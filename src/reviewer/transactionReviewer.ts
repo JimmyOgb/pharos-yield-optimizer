@@ -33,10 +33,19 @@ export interface TransactionStepReview {
     value: string;
     formatted: string;
   }>;
-  payloadStatus: 'AVAILABLE' | 'UNAVAILABLE';
+  payloadStatus: 'AVAILABLE' | 'UNAVAILABLE' | 'INCOMPLETE';
   payload?: UnsignedTransactionPayload;
   unavailabilityReason?: string;
   risksAndConstraints: string[];
+}
+
+export type ReceiverValidationStatus = 'VALID' | 'MISSING' | 'INVALID_ZERO_ADDRESS' | 'INVALID_FORMAT';
+
+export interface AddressValidationResult {
+  isValid: boolean;
+  status: ReceiverValidationStatus;
+  normalizedAddress?: string;
+  error?: string;
 }
 
 export interface TransactionReviewReport {
@@ -47,6 +56,9 @@ export interface TransactionReviewReport {
   estimatedGasCostWei: string;
   estimatedGasCostPros: string;
   gasPriceGwei: string;
+  receiverStatus: ReceiverValidationStatus;
+  receiverAddress?: string;
+  isReadyForExternalReview: boolean;
   steps: TransactionStepReview[];
   safetyNotice: {
     isNonCustodial: true;
@@ -58,11 +70,49 @@ export interface TransactionReviewReport {
 
 export class TransactionReviewer {
   /**
+   * Validates a recipient EVM address for chain compatibility (Chain ID 1672)
+   * Rejects missing, malformed, and zero addresses.
+   */
+  public static validateReceiverAddress(address?: string): AddressValidationResult {
+    if (address === undefined || address === null || typeof address !== 'string' || address.trim() === '') {
+      return {
+        isValid: false,
+        status: 'MISSING',
+        error: 'Receiver address was not provided.',
+      };
+    }
+
+    const trimmed = address.trim();
+
+    if (!/^0x[a-fA-F0-9]{40}$/.test(trimmed)) {
+      return {
+        isValid: false,
+        status: 'INVALID_FORMAT',
+        error: 'Invalid address syntax: must be 0x followed by exactly 40 hexadecimal characters.',
+      };
+    }
+
+    if (/^0x0{40}$/i.test(trimmed)) {
+      return {
+        isValid: false,
+        status: 'INVALID_ZERO_ADDRESS',
+        error: 'Zero address (0x0000...0000) is rejected as a receiver. Cannot mint shares to address(0).',
+      };
+    }
+
+    return {
+      isValid: true,
+      status: 'VALID',
+      normalizedAddress: trimmed,
+    };
+  }
+
+  /**
    * Left-pads a 20-byte address to a 32-byte EVM ABI word
    */
   public static encodeAddressParam(address: string): string {
     const clean = address.toLowerCase().replace(/^0x/, '');
-    if (clean.length !== 40) {
+    if (clean.length !== 40 || !/^[a-f0-9]{40}$/.test(clean)) {
       throw new Error(`Invalid address length: expected 40 hex chars, got ${clean.length}`);
     }
     return clean.padStart(64, '0');
@@ -89,7 +139,7 @@ export class TransactionReviewer {
     observedBlockNumber?: number;
     observedBlockTimestamp?: number;
   }): TransactionReviewReport {
-    const { strategyId, amountPros, userAddress = '0x0000000000000000000000000000000000000000' } = params;
+    const { strategyId, amountPros, userAddress } = params;
     const gasPriceWei = params.gasPriceWei ?? 10_000_000_000n; // 10 Gwei default
     const gasPriceGwei = (Number(gasPriceWei) / 1e9).toFixed(2);
     const amountWei = decimalToWei(amountPros);
@@ -123,13 +173,80 @@ export class TransactionReviewer {
   private static reviewFarooStaking(
     amountPros: number,
     amountWei: bigint,
-    userAddress: string,
+    userAddress: string | undefined,
     gasPriceWei: bigint,
     gasPriceGwei: string
   ): TransactionReviewReport {
+    const validation = this.validateReceiverAddress(userAddress);
     const totalGasLimit = 180_000n; // 45k wrap + 45k approve + 90k vault deposit
     const gasCostWei = totalGasLimit * gasPriceWei;
     const gasCostPros = (Number(gasCostWei) / 1e18).toFixed(6);
+
+    const step3Parameters = [
+      {
+        name: 'assets',
+        type: 'uint256',
+        value: amountWei.toString(),
+        formatted: `${amountPros.toLocaleString()} WPROS`,
+      },
+      {
+        name: 'receiver',
+        type: 'address',
+        value: validation.isValid ? validation.normalizedAddress! : (userAddress || ''),
+        formatted: validation.isValid
+          ? validation.normalizedAddress!
+          : validation.status === 'MISSING'
+            ? 'NOT SET (Action Required: Provide your Pacific Mainnet address)'
+            : validation.status === 'INVALID_ZERO_ADDRESS'
+              ? 'REJECTED: 0x0000...0000 (Zero address placeholder rejected)'
+              : `REJECTED: ${userAddress} (Malformed address syntax)`,
+      },
+    ];
+
+    const step3Risks: string[] = [
+      'Mandatory unbonding delay: Contract on-chain parameter unbondingPeriod = 86,400s (1 day); protocol unbonding queue may take up to 14 days.',
+      'Yield compounds into exchange rate (stPROS/PROS increases over time). Token quantity in wallet remains constant.',
+    ];
+
+    if (!validation.isValid) {
+      if (validation.status === 'INVALID_ZERO_ADDRESS' || validation.status === 'MISSING') {
+        step3Risks.push('ACTION REQUIRED: Receiver parameter is currently set to placeholder address (0x0000...0000) or missing. You MUST replace this parameter with your external wallet address in your Web3 wallet or script so minted stPROS shares are delivered to your account.');
+      } else {
+        step3Risks.push(`ACTION REQUIRED: Receiver address is malformed (${validation.error}). Receiver-dependent calldata cannot be prepared or exported.`);
+      }
+    }
+
+    const step3Review: TransactionStepReview = {
+      stepNumber: 3,
+      title: 'Deposit WPROS into Faroo Liquid Staking Vault',
+      contractName: 'Faroo Liquid Staked PROS (stPROS)',
+      contractAddress: CANONICAL_CONTRACTS.FAROO_STPROS,
+      methodName: 'deposit(uint256,address)',
+      selector: '0x6e553f65',
+      isAbiVerified: true,
+      explanation: 'Deposits WPROS into the Faroo ERC-4626 vault and mints yield-bearing stPROS shares to the recipient address.',
+      parameters: step3Parameters,
+      payloadStatus: validation.isValid ? 'AVAILABLE' : 'INCOMPLETE',
+      payload: validation.isValid
+        ? {
+            to: CANONICAL_CONTRACTS.FAROO_STPROS,
+            data: `0x6e553f65${this.encodeUint256Param(amountWei)}${this.encodeAddressParam(validation.normalizedAddress!)}`,
+            value: '0x0',
+            gasLimit: '0x15f90', // 90,000
+            maxFeePerGas: `0x${gasPriceWei.toString(16)}`,
+            maxPriorityFeePerGas: `0x${gasPriceWei.toString(16)}`,
+            chainId: NETWORK_CONFIG.chainId,
+          }
+        : undefined,
+      unavailabilityReason: validation.isValid
+        ? undefined
+        : validation.status === 'MISSING'
+          ? 'CALLDATA_INCOMPLETE: Receiver address was not provided. A valid non-zero Pacific Mainnet recipient address is required before receiver-dependent calldata can be generated or exported.'
+          : validation.status === 'INVALID_ZERO_ADDRESS'
+            ? 'CALLDATA_INCOMPLETE: Zero address (0x0000...0000) is rejected as a receiver. Cannot mint shares to null address.'
+            : `CALLDATA_INCOMPLETE: Malformed receiver address syntax (${validation.error}). Expected 0x followed by 40 hex characters.`,
+      risksAndConstraints: step3Risks,
+    };
 
     const steps: TransactionStepReview[] = [
       {
@@ -194,44 +311,7 @@ export class TransactionReviewer {
           'Standard ERC-20 approval pattern. Recommended to approve exact amount only to minimize allowance risk.',
         ],
       },
-      {
-        stepNumber: 3,
-        title: 'Deposit WPROS into Faroo Liquid Staking Vault',
-        contractName: 'Faroo Liquid Staked PROS (stPROS)',
-        contractAddress: CANONICAL_CONTRACTS.FAROO_STPROS,
-        methodName: 'deposit(uint256,address)',
-        selector: '0x6e553f65',
-        isAbiVerified: true,
-        explanation: 'Deposits WPROS into the Faroo ERC-4626 vault and mints yield-bearing stPROS shares to the recipient address.',
-        parameters: [
-          {
-            name: 'assets',
-            type: 'uint256',
-            value: amountWei.toString(),
-            formatted: `${amountPros.toLocaleString()} WPROS`,
-          },
-          {
-            name: 'receiver',
-            type: 'address',
-            value: userAddress,
-            formatted: userAddress,
-          },
-        ],
-        payloadStatus: 'AVAILABLE',
-        payload: {
-          to: CANONICAL_CONTRACTS.FAROO_STPROS,
-          data: `0x6e553f65${this.encodeUint256Param(amountWei)}${this.encodeAddressParam(userAddress)}`,
-          value: '0x0',
-          gasLimit: '0x15f90', // 90,000
-          maxFeePerGas: `0x${gasPriceWei.toString(16)}`,
-          maxPriorityFeePerGas: `0x${gasPriceWei.toString(16)}`,
-          chainId: NETWORK_CONFIG.chainId,
-        },
-        risksAndConstraints: [
-          'Mandatory unbonding delay: Contract on-chain parameter unbondingPeriod = 86,400s (1 day); protocol unbonding queue may take up to 14 days.',
-          'Yield compounds into exchange rate (stPROS/PROS increases over time). Token quantity in wallet remains constant.',
-        ],
-      },
+      step3Review,
     ];
 
     return {
@@ -242,6 +322,9 @@ export class TransactionReviewer {
       estimatedGasCostWei: gasCostWei.toString(),
       estimatedGasCostPros: gasCostPros,
       gasPriceGwei,
+      receiverStatus: validation.status,
+      receiverAddress: validation.isValid ? validation.normalizedAddress : undefined,
+      isReadyForExternalReview: validation.isValid,
       steps,
       safetyNotice: {
         isNonCustodial: true,
@@ -259,7 +342,7 @@ export class TransactionReviewer {
   private static reviewFarooInstantDex(
     amountPros: number,
     amountWei: bigint,
-    userAddress: string,
+    userAddress: string | undefined,
     gasPriceWei: bigint,
     gasPriceGwei: string
   ): TransactionReviewReport {
@@ -290,6 +373,8 @@ export class TransactionReviewer {
       estimatedGasCostWei: '0',
       estimatedGasCostPros: '0.000000',
       gasPriceGwei: '0.00',
+      receiverStatus: 'MISSING',
+      isReadyForExternalReview: false,
       steps: [
         {
           stepNumber: 1,
@@ -332,6 +417,8 @@ export class TransactionReviewer {
       estimatedGasCostWei: '0',
       estimatedGasCostPros: '0.000000',
       gasPriceGwei: '0.00',
+      receiverStatus: 'MISSING',
+      isReadyForExternalReview: false,
       steps: [
         {
           stepNumber: 1,

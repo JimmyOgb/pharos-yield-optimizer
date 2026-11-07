@@ -2,8 +2,12 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert';
 import {
   generateRecommendation,
+  evaluateStrategyProjection,
+  STRATEGY_PROFILES,
+  FORWARD_RATES_BPS,
 } from '../../src/engine/recommendationEngine.ts';
 import { SCALE_18 } from '../../src/engine/yieldMath.ts';
+import { CANONICAL_CONTRACTS } from '../../src/types/index.ts';
 
 describe('RecommendationEngine - Deterministic Outcomes & Provenance Safeguards', () => {
   it('strictly preserves the invariant: verifiedQualifyingSourcesCount === 1', () => {
@@ -208,6 +212,197 @@ describe('RecommendationEngine - Deterministic Outcomes & Provenance Safeguards'
       const baseline = res.comparisons.find((c) => c.profile.id === 'native-pros-baseline')!;
       assert.strictEqual(baseline.profile.classification, 'BASELINE_ONLY');
       assert.strictEqual(baseline.profile.qualifiesTowardReq01, false);
+      // Canonical WPROS address contract consistency
+      assert.strictEqual(baseline.profile.contractAddress, '0x52C48d4213107b20bC583832b0d951FB9CA8F0B0');
+    });
+  });
+
+  describe('Horizon Spectrum & Rebalancing Sensitivity (Gate 7C)', () => {
+    it('1-day horizon: outputs STAY_PUT (lockup constraint + instant DEX friction exceeds yield)', () => {
+      const res = generateRecommendation({
+        principalWei: 1_000n * SCALE_18,
+        asset: 'PROS',
+        horizonDays: 1,
+        requireInstantLiquidity: false,
+      });
+      assert.strictEqual(res.decision, 'STAY_PUT');
+      assert.strictEqual(res.reasonCode, 'HORIZON_SHORTER_THAN_LOCKUP');
+    });
+
+    it('7-day horizon: outputs STAY_PUT (7 days < 14-day queue)', () => {
+      const res = generateRecommendation({
+        principalWei: 1_000n * SCALE_18,
+        asset: 'PROS',
+        horizonDays: 7,
+        requireInstantLiquidity: false,
+      });
+      assert.strictEqual(res.decision, 'STAY_PUT');
+      assert.strictEqual(res.reasonCode, 'HORIZON_SHORTER_THAN_LOCKUP');
+    });
+
+    it('14-day horizon: exactly meets lockup boundary -> outputs MOVE to Faroo Patient Staking', () => {
+      const res = generateRecommendation({
+        principalWei: 1_000n * SCALE_18,
+        asset: 'PROS',
+        horizonDays: 14,
+        requireInstantLiquidity: false,
+      });
+      assert.strictEqual(res.decision, 'MOVE');
+      assert.strictEqual(res.targetStrategyId, 'faroo-patient-staking');
+      assert.ok(res.netAdvantagePros > 3.25);
+    });
+
+    it('60-day horizon: outputs MOVE with positive net yield', () => {
+      const res = generateRecommendation({
+        principalWei: 1_000n * SCALE_18,
+        asset: 'PROS',
+        horizonDays: 60,
+        requireInstantLiquidity: false,
+      });
+      assert.strictEqual(res.decision, 'MOVE');
+      assert.strictEqual(res.targetStrategyId, 'faroo-patient-staking');
+      assert.ok(res.netAdvantagePros > 13.96);
+    });
+
+    it('180-day horizon: long-term compounder outputs MOVE with sustained net gain', () => {
+      const res = generateRecommendation({
+        principalWei: 1_000n * SCALE_18,
+        asset: 'PROS',
+        horizonDays: 180,
+        requireInstantLiquidity: false,
+      });
+      assert.strictEqual(res.decision, 'MOVE');
+      assert.strictEqual(res.targetStrategyId, 'faroo-patient-staking');
+      assert.ok(res.netAdvantagePros > 41.0);
+    });
+  });
+
+  describe('Current-Position Option Transitions (Gate 7C)', () => {
+    it('currentPosition: native-pros-baseline -> recommends MOVE to Faroo Patient', () => {
+      const res = generateRecommendation({
+        principalWei: 1_000n * SCALE_18,
+        asset: 'PROS',
+        horizonDays: 60,
+        requireInstantLiquidity: false,
+        currentStrategyId: 'native-pros-baseline',
+      });
+      assert.strictEqual(res.decision, 'MOVE');
+      assert.strictEqual(res.targetStrategyId, 'faroo-patient-staking');
+    });
+
+    it('currentPosition: faroo-patient-staking -> outputs STAY_PUT (already optimal)', () => {
+      const res = generateRecommendation({
+        principalWei: 1_000n * SCALE_18,
+        asset: 'PROS',
+        horizonDays: 60,
+        requireInstantLiquidity: false,
+        currentStrategyId: 'faroo-patient-staking',
+      });
+      assert.strictEqual(res.decision, 'STAY_PUT');
+      assert.strictEqual(res.reasonCode, 'ALREADY_IN_OPTIMAL_POSITION');
+    });
+
+    it('currentPosition: faroo-instant-dex -> recommends MOVE to faroo-patient-staking to eliminate 0.40% DEX friction', () => {
+      const res = generateRecommendation({
+        principalWei: 1_000n * SCALE_18,
+        asset: 'PROS',
+        horizonDays: 60,
+        requireInstantLiquidity: false,
+        currentStrategyId: 'faroo-instant-dex',
+      });
+      assert.strictEqual(res.decision, 'MOVE');
+      assert.strictEqual(res.targetStrategyId, 'faroo-patient-staking');
+      // Patient staking saves ~4 PROS in DEX fees/slippage over instant DEX
+      assert.ok(res.netAdvantagePros > 3.9);
+    });
+  });
+
+  describe('WPROS Baseline & Native PROS Economic Integrity (Gate 7C.1)', () => {
+    it('baseline represents un-staked capital holding benchmark with 0% yield and 0 friction', () => {
+      const profile = STRATEGY_PROFILES['native-pros-baseline'];
+      assert.strictEqual(profile.id, 'native-pros-baseline');
+      assert.strictEqual(profile.classification, 'BASELINE_ONLY');
+      assert.strictEqual(profile.denomination, 'PROS');
+      assert.strictEqual(profile.qualifiesTowardReq01, false);
+      assert.strictEqual(profile.lockupPeriodDays, 0);
+      assert.strictEqual(profile.exitDelayDays, 0);
+      assert.strictEqual(profile.exitFeeBps, 0);
+      assert.strictEqual(FORWARD_RATES_BPS['native-pros-baseline'], 0);
+
+      const proj = evaluateStrategyProjection('native-pros-baseline', 1_000n * SCALE_18, 60, 10.0);
+      assert.strictEqual(proj.grossYieldWei, 0n);
+      assert.strictEqual(proj.grossYieldPros, 0);
+      assert.strictEqual(proj.friction.totalFrictionWei, 0n);
+      assert.strictEqual(proj.friction.totalFrictionPros, 0);
+      assert.strictEqual(proj.netGainWei, 0n);
+      assert.strictEqual(proj.netGainPros, 0);
+      assert.strictEqual(proj.breakEvenDays, 0);
+    });
+
+    it('canonical WPROS address is verified and points to the official ERC-20 contract', () => {
+      const profile = STRATEGY_PROFILES['native-pros-baseline'];
+      assert.strictEqual(profile.contractAddress, CANONICAL_CONTRACTS.CANONICAL_WPROS);
+      assert.strictEqual(CANONICAL_CONTRACTS.CANONICAL_WPROS, '0x52C48d4213107b20bC583832b0d951FB9CA8F0B0');
+    });
+
+    it('handles native PROS and WPROS balances in identical 1e18 decimal units with 1:1 wrapping equivalence', () => {
+      const principalWei = 1_000n * SCALE_18;
+      // 1000 PROS = 1000 * 10^18 wei
+      assert.strictEqual(principalWei, 1000000000000000000000n);
+
+      // Moving to Faroo accounts for wrapping gas (45k units) inside total entry gas (180k units)
+      const res = generateRecommendation({
+        principalWei,
+        asset: 'PROS',
+        horizonDays: 60,
+        requireInstantLiquidity: false,
+      }, 10.0); // 10 Gwei
+
+      assert.strictEqual(res.decision, 'MOVE');
+      const farooProj = res.comparisons.find((c) => c.profile.id === 'faroo-patient-staking')!;
+      
+      // Faroo lifecycle gas: 265,000 gas units @ 10 Gwei = 0.002650 PROS (includes 45k wrap gas)
+      assert.strictEqual(farooProj.friction.gasCostWei, 2_650_000_000_000_000n);
+      assert.strictEqual(farooProj.friction.totalFrictionPros, 0.00265);
+      // Protocol fees for Faroo Patient Staking are 0%
+      assert.strictEqual(farooProj.friction.entryFeeWei, 0n);
+      assert.strictEqual(farooProj.friction.exitFeeWei, 0n);
+    });
+
+    it('does NOT double-count wrapping gas or conversion when comparing against baseline', () => {
+      const principalWei = 1_000n * SCALE_18;
+      const res = generateRecommendation({
+        principalWei,
+        asset: 'PROS',
+        horizonDays: 60,
+        requireInstantLiquidity: false,
+      }, 10.0); // 10 Gwei
+
+      const farooProj = res.comparisons.find((c) => c.profile.id === 'faroo-patient-staking')!;
+      const baselineProj = res.comparisons.find((c) => c.profile.id === 'native-pros-baseline')!;
+
+      // Baseline net gain is 0
+      assert.strictEqual(baselineProj.netGainWei, 0n);
+
+      // Gross yield: (1000 * 850 * 60) / (10000 * 365) = 13.972602739726027 PROS (scaled)
+      // Deducts friction exactly ONCE: grossYield - totalFriction
+      const expectedNetGainWei = farooProj.grossYieldWei - farooProj.friction.totalFrictionWei;
+      assert.strictEqual(farooProj.netGainWei, expectedNetGainWei);
+
+      // Net advantage over baseline = farooNetGain - baselineNetGain = farooNetGain - 0
+      assert.strictEqual(res.netAdvantageWei, farooProj.netGainWei);
+    });
+
+    it('baseline cannot be chosen as a yield destination', () => {
+      const res = generateRecommendation({
+        principalWei: 1_000n * SCALE_18,
+        asset: 'PROS',
+        horizonDays: 60,
+        requireInstantLiquidity: false,
+      });
+
+      assert.notStrictEqual(res.targetStrategyId, 'native-pros-baseline');
+      assert.strictEqual(res.targetStrategyId, 'faroo-patient-staking');
     });
   });
 });
