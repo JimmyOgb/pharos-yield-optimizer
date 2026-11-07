@@ -146,7 +146,54 @@ body {
   font-size: 11px;
 }
 
-/* Invariant Banner */
+/* Coverage Banner */
+.coverage-banner {
+  background: rgba(30, 41, 59, 0.7);
+  border: 1px solid rgba(59, 130, 246, 0.35);
+  border-radius: var(--radius-md);
+  padding: 16px 20px;
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  margin-bottom: 20px;
+}
+
+.coverage-icon {
+  font-size: 24px;
+  flex-shrink: 0;
+}
+
+.coverage-content {
+  flex: 1;
+}
+
+.coverage-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
+.coverage-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #f8fafc;
+  letter-spacing: 0.02em;
+}
+
+.coverage-content p {
+  font-size: 13px;
+  color: #cbd5e1;
+  line-height: 1.45;
+}
+
+.source-link {
+  color: #60a5fa;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* Invariant Banner (Legacy compatibility) */
 .invariant-banner {
   background: rgba(245, 158, 11, 0.08);
   border: 1px solid rgba(245, 158, 11, 0.35);
@@ -662,6 +709,10 @@ body {
 
 .source-card.qualified {
   border-color: rgba(16, 185, 129, 0.4);
+}
+
+.source-card.informational {
+  border-color: rgba(59, 130, 246, 0.4);
 }
 
 .source-card.disqualified {

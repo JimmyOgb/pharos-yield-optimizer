@@ -25,6 +25,7 @@ describe('Server & UI Dashboard - Integration & API Endpoints', () => {
       if (method === 'eth_chainId') return '0x688'; // 1672
       if (method === 'eth_blockNumber') return '0x14ffd8c'; // 22,019,468
       if (method === 'eth_gasPrice') return '0x2540be400'; // 10 Gwei
+      if (method === 'eth_getBalance') return '0xeadb6cf9a9478ea10ae2c0'; // 283.9M PROS
       if (method === 'eth_getBlockByNumber') {
         const nowSec = Math.floor(Date.now() / 1000);
         return {
@@ -36,16 +37,37 @@ describe('Server & UI Dashboard - Integration & API Endpoints', () => {
       }
       if (method === 'eth_call') {
         const callObj = params[0] as { to: string; data: string };
+        const data = callObj.data;
         // Faroo totalPooledPros()
-        if (callObj.data === '0x01e1d114') {
+        if (data === '0x01e1d114') {
           return '0x000000000000000000000000000000000000000000029b886d586a3d01ee1709'; // 3,152,335.1227 PROS
         }
         // Faroo totalSupply()
-        if (callObj.data === '0x18160ddd') {
+        if (data === '0x18160ddd') {
           return '0x00000000000000000000000000000000000000000002984445d7ac484049e4bf'; // 3,136,910.7559 stPROS
         }
+        // Native PoS getDelegator()
+        if (data.startsWith('0x3a6d6bae')) {
+          const word0 = '000000000000000000000000000000000000000000000c3f3522bdae0e40a4ca';
+          const zeroes = '0000000000000000000000000000000000000000000000000000000000000000';
+          const word7 = '00000000000000000000000000000000000000000000001bc12595adc3695e5f';
+          return '0x' + word0 + word0 + zeroes + zeroes + zeroes + zeroes + zeroes + word7 + zeroes;
+        }
+        // FaroSwap V3 Pool calls
+        if (data === '0x3850c7bd') {
+          const w0 = '0000000000000000000000000000000000000c5b90a5f20202990ad6'.padStart(64, '0');
+          const w1 = 'fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffbb0b8';
+          const zeroes = '0000000000000000000000000000000000000000000000000000000000000001';
+          return '0x' + w0 + w1 + zeroes + zeroes + zeroes + zeroes + zeroes;
+        }
+        if (data === '0x1a686502') return '0x00000000000000000000000000000000000000000000000004012f1783eec8fa';
+        if (data === '0xddca3f43') return '0x0000000000000000000000000000000000000000000000000000000000000bb8';
+        if (data === '0xd0c93a7c') return '0x000000000000000000000000000000000000000000000000000000000000003c';
+        if (data === '0xf3058399') return '0x00000000000000000000000000019fb4a2db2504ae0783197582da236eea6ba8';
+        if (data === '0x46141319') return '0x0000000000000000000000000000000000000104dd1d50db811830c037c125b5';
+        if (data.startsWith('0x70a08231')) return '0x00000000000000000000000000000000000000000000284ab9f73f5509772599';
         // StateView poolManager()
-        if (callObj.data === '0xdc4c90d3') {
+        if (data === '0xdc4c90d3') {
           return '0x000000000000000000000000d681e96ad464f8f7f7fa7e1e0c5a367175e44550';
         }
         return '0x00';
@@ -82,7 +104,8 @@ describe('Server & UI Dashboard - Integration & API Endpoints', () => {
       assert.match(res.headers.get('content-type') || '', /text\/html/);
       const text = await res.text();
       assert.match(text, /Pharos Yield Optimizer/);
-      assert.match(text, /ACCEPTANCE CRITERIA STATUS: FEWER THAN THREE QUALIFYING SOURCES/);
+      assert.match(text, /Yield-Source Coverage/);
+      assert.match(text, /3 Sources Monitored On-Chain/);
     });
 
     it('serves styles.css at GET /styles.css with 200 OK and text/css', async () => {
@@ -143,45 +166,52 @@ describe('Server & UI Dashboard - Integration & API Endpoints', () => {
   });
 
   describe('API: GET /api/sources', () => {
-    it('returns yield source comparison and strictly enforces one-source invariant', async () => {
+    it('returns dynamic three-source yield coverage with instant-exit safety status', async () => {
       const res = await fetch(`${baseUrl}/api/sources`);
       assert.equal(res.status, 200);
       const data = await res.json();
 
-      // Verify invariant notice
-      assert.equal(data.invariantNotice.verifiedCount, 1);
-      assert.equal(data.invariantNotice.requiredCount, 3);
-      assert.equal(data.invariantNotice.isRequirementMet, false);
-      assert.match(data.invariantNotice.message, /Only ONE qualifying yield source/);
+      // Verify dynamic coverage metadata
+      assert.ok(data.yieldSourceCoverage);
+      assert.equal(data.yieldSourceCoverage.totalMonitoredCount, 3);
+      assert.equal(data.yieldSourceCoverage.qualifiedCount, 3);
+      assert.equal(data.yieldSourceCoverage.actionableCount, 1);
+      assert.equal(data.yieldSourceCoverage.isThreeSourceRequirementMet, true);
+      assert.match(data.yieldSourceCoverage.summary, /1 Actionable Verified Yield Source/);
+
+      // Verify instant exit safety
+      assert.ok(data.instantExit);
+      assert.equal(data.instantExit.instantExitAvailable, false);
+      assert.equal(data.instantExit.instantExitFee, null);
+      assert.equal(data.instantExit.instantExitStatus, 'NO_VERIFIED_SECONDARY_LIQUIDITY');
 
       // Verify sources count and classification
-      assert.equal(data.sources.length, 4);
+      assert.equal(data.sources.length, 3);
 
-      // 1. Faroo stPROS
+      // 1. Faroo stPROS (Actionable Verified)
       const faroo = data.sources.find((s: any) => s.id === 'faroo-stpros');
       assert.ok(faroo);
-      assert.equal(faroo.qualificationStatus, 'QUALIFIED_GENUINE_SOURCE');
+      assert.equal(faroo.qualificationStatus, 'FULLY_QUALIFIED');
+      assert.equal(faroo.operationalStatus, 'ACTIONABLE_VERIFIED');
+      assert.equal(faroo.isActionable, true);
       assert.equal(faroo.isVerifiedOnChain, true);
-      assert.equal(faroo.liveRate, '1.00491704');
+      assert.ok(parseFloat(faroo.liveRate) > 1.0);
 
-      // 2. DEX LP
-      const dex = data.sources.find((s: any) => s.id === 'pharos-dex-lp');
-      assert.ok(dex);
-      assert.equal(dex.qualificationStatus, 'DISQUALIFIED_FROM_LIVE_APR');
-      assert.equal(dex.liveRate, 'UNAVAILABLE');
-      assert.match(dex.exclusionReason, /indexer or subgraph/);
-
-      // 3. Axil APC3M
-      const axil = data.sources.find((s: any) => s.id === 'axil-apc3m');
-      assert.ok(axil);
-      assert.equal(axil.qualificationStatus, 'DISQUALIFIED_FROM_PROS_REBALANCING');
-      assert.match(axil.exclusionReason, /off-chain target APY/i);
-
-      // 4. Native PoS
-      const pos = data.sources.find((s: any) => s.id === 'native-pos-consensus');
+      // 2. Native PoS (Live Informational / Restricted Entry)
+      const pos = data.sources.find((s: any) => s.id === 'native-pos-staking');
       assert.ok(pos);
-      assert.equal(pos.qualificationStatus, 'DISQUALIFIED_AS_DELEGATABLE');
+      assert.equal(pos.qualificationStatus, 'LIVE_INFORMATIONAL');
+      assert.equal(pos.operationalStatus, 'NOT_AVAILABLE_FOR_ENTRY');
+      assert.equal(pos.isActionable, false);
       assert.match(pos.exclusionReason, /permissionless validator delegation/i);
+
+      // 3. FaroSwap V3 LP (Live Informational / Dual-Asset Benchmark)
+      const lp = data.sources.find((s: any) => s.id === 'faroswap-wpros-usdc-lp');
+      assert.ok(lp);
+      assert.equal(lp.qualificationStatus, 'QUALIFIED_WITH_DISCLOSURE');
+      assert.equal(lp.operationalStatus, 'LIVE_INFORMATIONAL');
+      assert.equal(lp.isActionable, false);
+      assert.match(lp.exclusionReason, /dual-asset benchmark/i);
     });
   });
 
@@ -202,7 +232,27 @@ describe('Server & UI Dashboard - Integration & API Endpoints', () => {
       assert.equal(data.status, 'SUCCESS');
       assert.equal(data.recommendation.decision, 'MOVE');
       assert.equal(data.recommendation.targetStrategyId, 'faroo-patient-staking');
+      assert.equal(data.recommendation.minimumHoldingDays, 15, 'Faroo minimum holding days must be synchronized to 15');
       assert.ok(data.recommendation.projectedNetGainPros > 0);
+    });
+
+    it('generates STAY_PUT with NO_VERIFIED_SECONDARY_LIQUIDITY when instant liquidity is requested', async () => {
+      const res = await fetch(`${baseUrl}/api/recommendation`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          principalPros: 1000,
+          horizonDays: 60,
+          requiresInstantLiquidity: true,
+        }),
+      });
+
+      assert.equal(res.status, 200);
+      const data = await res.json();
+      assert.equal(data.status, 'SUCCESS');
+      assert.equal(data.recommendation.decision, 'STAY_PUT');
+      assert.equal(data.recommendation.reasonCode, 'NO_VERIFIED_SECONDARY_LIQUIDITY');
+      assert.match(data.recommendation.explanation, /No verified secondary market liquidity pool exists/);
     });
 
     it('generates STAY_PUT recommendation when horizon (7 days) is less than lockup (14 days)', async () => {

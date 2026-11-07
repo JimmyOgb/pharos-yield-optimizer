@@ -53,6 +53,102 @@ describe('YieldMath - Mathematical Correctness & Edge Cases', () => {
       const wei = 1_500_000_000_000_000_000n;
       assert.strictEqual(scaledToDecimal(wei), 1.5);
     });
+
+    describe('Gate 10A.3 - Signed BigInt Scaling Regression Tests', () => {
+      it('Case 1: Positive whole value', () => {
+        const val = 2n * SCALE_18;
+        const res = scaledToDecimal(val);
+        assert.strictEqual(res, 2.0);
+        assert.ok(!Number.isNaN(res) && Number.isFinite(res));
+      });
+
+      it('Case 2: Positive fractional value', () => {
+        const val = 500_000_000_000_000_000n; // 0.5 PROS
+        const res = scaledToDecimal(val);
+        assert.strictEqual(res, 0.5);
+        assert.ok(!Number.isNaN(res) && Number.isFinite(res));
+      });
+
+      it('Case 3: Zero', () => {
+        const res = scaledToDecimal(0n);
+        assert.strictEqual(res, 0);
+        assert.ok(!Number.isNaN(res) && Number.isFinite(res));
+      });
+
+      it('Case 4: Negative whole value', () => {
+        const val = -3n * SCALE_18;
+        const res = scaledToDecimal(val);
+        assert.strictEqual(res, -3.0);
+        assert.ok(!Number.isNaN(res) && Number.isFinite(res));
+      });
+
+      it('Case 5: Negative fractional value smaller than one PROS', () => {
+        const val = -500_000_000_000_000_000n; // -0.5 PROS
+        const res = scaledToDecimal(val);
+        assert.strictEqual(res, -0.5);
+        assert.ok(!Number.isNaN(res) && Number.isFinite(res));
+      });
+
+      it('Case 6: Negative value with both whole and fractional components', () => {
+        // -2.370269263698630137 PROS
+        const val = -2_370_269_263_698_630_137n;
+        const res = scaledToDecimal(val);
+        assert.ok(Math.abs(res - (-2.37026926369863)) < 1e-12);
+        assert.strictEqual(res < 0, true);
+        assert.ok(!Number.isNaN(res) && Number.isFinite(res));
+      });
+
+      it('Case 7: Negative value with an exact fractional component', () => {
+        // -1.5 PROS exact fractional representation
+        const valHalf = -1_500_000_000_000_000_000n;
+        const resHalf = scaledToDecimal(valHalf);
+        assert.strictEqual(resHalf, -1.5);
+        assert.ok(!Number.isNaN(resHalf) && Number.isFinite(resHalf));
+
+        // -1 - 1 wei: verify it does not produce NaN or crash and evaluates to <= -1.0
+        const val1Wei = -1_000_000_000_000_000_001n;
+        const res1Wei = scaledToDecimal(val1Wei);
+        assert.strictEqual(res1Wei <= -1.0, true);
+        assert.ok(!Number.isNaN(res1Wei) && Number.isFinite(res1Wei));
+
+        // -1.0000000001 PROS: exact fractional within IEEE-754 precision
+        const valPrecise = -1_000_000_000_100_000_000n;
+        const resPrecise = scaledToDecimal(valPrecise);
+        assert.ok(resPrecise < -1.0 && resPrecise > -1.000000001);
+        assert.ok(!Number.isNaN(resPrecise) && Number.isFinite(resPrecise));
+      });
+
+      it('Case 8: Very large positive and negative BigInt values', () => {
+        const largePos = 283_924_850n * SCALE_18;
+        const resPos = scaledToDecimal(largePos);
+        assert.strictEqual(resPos, 283924850.0);
+        assert.ok(!Number.isNaN(resPos) && Number.isFinite(resPos));
+
+        const largeNeg = -283_924_850n * SCALE_18;
+        const resNeg = scaledToDecimal(largeNeg);
+        assert.strictEqual(resNeg, -283924850.0);
+        assert.ok(!Number.isNaN(resNeg) && Number.isFinite(resNeg));
+      });
+
+      it('Case 9: Entry and exit friction greater than gross yield', () => {
+        // Gross yield 1.63 PROS, friction 4.0004 PROS -> Net loss ~ -2.3704 PROS
+        const grossYieldWei = 1_630_000_000_000_000_000n;
+        const totalFrictionWei = 4_000_400_000_000_000_000n;
+        const netGainWei = grossYieldWei - totalFrictionWei; // -2_370_400_000_000_000_000n
+        const res = scaledToDecimal(netGainWei);
+        assert.strictEqual(res, -2.3704);
+        assert.ok(!Number.isNaN(res) && Number.isFinite(res));
+      });
+
+      it('Case 10: Net gain exactly zero', () => {
+        const grossYieldWei = 3_000_000_000_000_000_000n;
+        const totalFrictionWei = 3_000_000_000_000_000_000n;
+        const netGainWei = grossYieldWei - totalFrictionWei;
+        const res = scaledToDecimal(netGainWei);
+        assert.strictEqual(res, 0);
+        assert.ok(!Number.isNaN(res) && Number.isFinite(res));
+      });
+    });
   });
 
   describe('computeRealizedAccrual', () => {

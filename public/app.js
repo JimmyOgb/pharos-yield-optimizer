@@ -260,9 +260,10 @@ function renderSources() {
   }
 
   sourcesList.innerHTML = state.sources.map(src => {
-    const isQualified = src.qualificationStatus === 'QUALIFIED_GENUINE_SOURCE';
-    const cardClass = isQualified ? 'source-card qualified' : 'source-card disqualified';
-    const badgeClass = isQualified ? 'badge badge-success' : 'badge badge-warning';
+    const isActionable = src.isActionable || src.operationalStatus === 'ACTIONABLE_VERIFIED' || src.qualificationStatus === 'QUALIFIED_GENUINE_SOURCE';
+    const isInformational = src.operationalStatus === 'LIVE_INFORMATIONAL' || src.operationalStatus === 'NOT_AVAILABLE_FOR_ENTRY';
+    const cardClass = isActionable ? 'source-card qualified' : (isInformational ? 'source-card informational' : 'source-card disqualified');
+    const badgeClass = isActionable ? 'badge badge-success' : (isInformational ? 'badge badge-info' : 'badge badge-warning');
 
     let exclusionHtml = '';
     if (src.exclusionReason) {

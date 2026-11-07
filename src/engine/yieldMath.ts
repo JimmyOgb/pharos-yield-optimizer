@@ -35,14 +35,20 @@ export function computeExchangeRate(
 
 /**
  * Converts a 1e18 scaled bigint to a human-readable JavaScript number
+ * Correctly preserves sign for negative, positive, and zero values without producing NaN.
  */
 export function scaledToDecimal(valueScaled: bigint, scale = SCALE_18): number {
-  const integerPart = valueScaled / scale;
-  const fractionalPart = valueScaled % scale;
-  
-  // Format fractional part with leading zeros
+  if (valueScaled === 0n) return 0;
+
+  const isNegative = valueScaled < 0n;
+  const absVal = isNegative ? -valueScaled : valueScaled;
+  const integerPart = absVal / scale;
+  const fractionalPart = absVal % scale;
+
+  // Format fractional part with 18 leading zeros
   const fracStr = fractionalPart.toString().padStart(18, '0');
-  return Number(`${integerPart}.${fracStr}`);
+  const signStr = isNegative ? '-' : '';
+  return Number(`${signStr}${integerPart}.${fracStr}`);
 }
 
 /**

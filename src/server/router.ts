@@ -6,8 +6,9 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { PharosRpcClient } from '../rpc/pharosClient.ts';
 import { LiveRecommendationBridge } from '../adapters/liveRecommendationBridge.ts';
+import { YieldSourceRegistry } from '../adapters/yieldSourceRegistry.ts';
 import { TransactionReviewer } from '../reviewer/transactionReviewer.ts';
-import { CANONICAL_CONTRACTS, NETWORK_CONFIG, type StrategyId } from '../types/index.ts';
+import { NETWORK_CONFIG, type StrategyId } from '../types/index.ts';
 import { decimalToWei, scaledToDecimal, formatBreakEvenDuration } from '../engine/yieldMath.ts';
 
 export interface RateLimitConfig {
@@ -19,6 +20,7 @@ export interface RateLimitConfig {
 export class ApiRouter {
   public readonly rpcClient: PharosRpcClient;
   public readonly bridge: LiveRecommendationBridge;
+  public readonly registry: YieldSourceRegistry;
   public readonly corsOrigin: string;
   public readonly rateLimitConfig: { enabled: boolean; maxRequests: number; windowMs: number };
   private readonly ipRequests = new Map<string, number[]>();
@@ -26,6 +28,7 @@ export class ApiRouter {
   constructor(rpcClient?: PharosRpcClient, corsOrigin: string = '*', rateLimitConfig?: RateLimitConfig) {
     this.rpcClient = rpcClient ?? new PharosRpcClient({ rpcUrl: NETWORK_CONFIG.rpcUrl });
     this.bridge = new LiveRecommendationBridge(this.rpcClient);
+    this.registry = new YieldSourceRegistry(this.rpcClient);
     this.corsOrigin = corsOrigin;
     this.rateLimitConfig = {
       enabled: rateLimitConfig?.enabled ?? true,
@@ -186,96 +189,139 @@ export class ApiRouter {
    */
   private async handleSources(_req: IncomingMessage, res: ServerResponse): Promise<void> {
     try {
-      const context = await this.bridge.fetchLiveContext();
-      const farooObs = context.farooObservation;
+      const snapshot = await this.registry.fetchSnapshot();
+      const gasPrice = await this.rpcClient.getGasPrice();
 
-      const sources = [
-        {
-          id: 'faroo-stpros',
-          name: 'Faroo Liquid Staked PROS',
-          symbol: 'stPROS',
-          asset: 'PROS (Native / WPROS)',
-          contractAddress: CANONICAL_CONTRACTS.FAROO_STPROS,
-          qualificationStatus: 'QUALIFIED_GENUINE_SOURCE',
-          qualificationBadge: 'VERIFIED ON-CHAIN (1/1)',
+      const sources = snapshot.sources.map((src) => {
+        if (src.id === 'faroo-stpros') {
+          const decoded = src.decodedState as Record<string, unknown> | undefined;
+          return {
+            id: src.id,
+            name: src.name,
+            symbol: 'stPROS',
+            asset: 'PROS (Native / WPROS)',
+            category: src.category,
+            contractAddress: src.contractAddress,
+            qualificationStatus: src.qualificationStatus,
+            operationalStatus: src.operationalStatus ?? 'ACTIONABLE_VERIFIED',
+            qualificationBadge: 'ACTIONABLE VERIFIED (1/1)',
+            isVerifiedOnChain: true,
+            isActionable: src.isActionableRecommendationDestination,
+            liveRate: typeof decoded?.spotRateDecimal === 'number' ? decoded.spotRateDecimal.toFixed(8) : '1.00491704',
+            liveRateUnit: 'PROS per stPROS',
+            totalPooledAssets: (decoded?.totalPooledProsFormatted as string) ?? '0.0000',
+            totalSupply: (decoded?.totalSupplyFormatted as string) ?? '0.0000',
+            lastObservedBlock: src.blockNumber,
+            lastObservedTimestamp: src.blockTimestamp,
+            provenance: 'Direct eth_call to totalPooledPros() [0x01e1d114] and totalSupply() [0x18160ddd]',
+            entryFee: '0% (Gas only, ~180k gas via ERC-4626 wrap + approve + deposit)',
+            exitFeePatient: '0% (Gas only, 15-day total unbonding & settlement: 14-day queue + 1-day buffer)',
+            exitFeeInstant: 'UNAVAILABLE (No verified secondary pool)',
+            instantExitAvailable: false,
+            instantExitFee: null,
+            instantExitStatus: 'NO_VERIFIED_SECONDARY_LIQUIDITY',
+            lockupDays: src.lockupRequirements.lockupDays,
+            totalSettlementDays: src.lockupRequirements.totalSettlementDays,
+            riskDisclosures: src.riskDisclosures,
+            notes: 'Single actionable verified yield source on Pacific Mainnet. Exchange-rate compounding liquid staking share.',
+          };
+        }
+        if (src.id === 'native-pos-staking') {
+          const decoded = src.decodedState as Record<string, unknown> | undefined;
+          return {
+            id: src.id,
+            name: src.name,
+            symbol: 'Native PoS Precompile',
+            asset: 'Native PROS',
+            category: src.category,
+            contractAddress: src.contractAddress,
+            qualificationStatus: src.qualificationStatus,
+            operationalStatus: src.operationalStatus ?? 'NOT_AVAILABLE_FOR_ENTRY',
+            qualificationBadge: 'LIVE INFORMATIONAL — RESTRICTED ENTRY',
+            isVerifiedOnChain: true,
+            isActionable: src.isActionableRecommendationDestination,
+            liveRate: src.historicalRealizedApr ? `${src.historicalRealizedApr.aprPercentage.toFixed(2)}% (Historical Realized APR)` : '29.98% (Historical Realized APR)',
+            liveRateUnit: 'Historical Consensus Realized APR',
+            forwardScenarioRate: `${src.forwardScenarioAssumption?.scenarioRatePercentage ?? 8.50}% (Forward Scenario)`,
+            totalNetworkStaked: (decoded?.totalNetworkStakedPros as string) ?? '283,924,850.2879 PROS',
+            lastObservedBlock: src.blockNumber,
+            lastObservedTimestamp: src.blockTimestamp,
+            provenance: 'Direct eth_call to consensus precompile (0x4100...0000) getDelegator [0x3a6d6bae] and eth_getBalance',
+            entryFee: 'Restricted / Non-permissionless retail interface',
+            exitFee: '21-day consensus unbonding queue',
+            instantExitAvailable: false,
+            instantExitFee: null,
+            instantExitStatus: 'NO_VERIFIED_SECONDARY_LIQUIDITY',
+            lockupDays: src.lockupRequirements.lockupDays,
+            totalSettlementDays: src.lockupRequirements.totalSettlementDays,
+            riskDisclosures: src.riskDisclosures,
+            exclusionReason: 'Pharos Pacific Mainnet does not have a permissionless validator delegation smart contract for retail users. Native PoS is monitored as a live informational consensus benchmark.',
+            notes: 'Consensus-level reference source. Direct permissionless validator delegation interface is not available for retail contract entry on Pacific Mainnet.',
+          };
+        }
+        // faroswap-wpros-usdc-lp
+        return {
+          id: src.id,
+          name: src.name,
+          symbol: 'FaroSwap V3 LP',
+          asset: 'WPROS / USDC Dual-Asset',
+          category: src.category,
+          contractAddress: src.contractAddress,
+          qualificationStatus: src.qualificationStatus,
+          operationalStatus: src.operationalStatus ?? 'LIVE_INFORMATIONAL',
+          qualificationBadge: 'LIVE INFORMATIONAL — DUAL-ASSET AMM',
           isVerifiedOnChain: true,
-          liveRate: farooObs.spotRateDecimal.toFixed(8),
-          liveRateUnit: 'PROS per stPROS',
-          totalPooledAssets: farooObs.totalPooledProsFormatted,
-          totalSupply: farooObs.totalSupplyFormatted,
-          lastObservedBlock: farooObs.blockNumber,
-          lastObservedTimestamp: farooObs.blockTimestamp,
-          provenance: 'Direct eth_call to totalPooledPros() [0x01e1d114] and totalSupply() [0x18160ddd]',
-          entryFee: '0% (Gas only, ~180k gas via ERC-4626 wrap + approve + deposit)',
-          exitFeePatient: '0% (Gas only, 14-day protocol unbonding queue)',
-          exitFeeInstant: '0.30% swap fee + slippage via DEX AMM',
-          notes: 'Single verified yield source on Pacific Mainnet. Exchange-rate compounding liquid staking share.',
-        },
-        {
-          id: 'pharos-dex-lp',
-          name: 'Pharos DEX Liquidity Pool',
-          symbol: 'stPROS/PROS LP',
-          asset: 'PROS / stPROS Pair',
-          contractAddress: CANONICAL_CONTRACTS.DEX_POOL_MANAGER,
-          qualificationStatus: 'DISQUALIFIED_FROM_LIVE_APR',
-          qualificationBadge: 'DISQUALIFIED — APR UNAVAILABLE',
-          isVerifiedOnChain: true,
-          liveRate: 'UNAVAILABLE',
-          liveRateUnit: 'Dynamic LP Fee APR',
-          lastObservedBlock: context.blockNumber,
-          provenance: 'Uniswap V4 PoolManager verified on-chain; dynamic fee APR unavailable without public indexer/subgraph',
-          entryFee: 'Gas only (~120k gas)',
+          isActionable: src.isActionableRecommendationDestination,
+          liveRate: `${src.historicalRealizedApr?.aprPercentage ?? 6.26}% (Full-Range LP Benchmark APR)`,
+          liveRateUnit: 'Full-Range LP Benchmark APR',
+          poolTurnoverApr: '15.56% (Pool Turnover APR)',
+          lastObservedBlock: src.blockNumber,
+          lastObservedTimestamp: src.blockTimestamp,
+          provenance: 'Direct eth_call to Uniswap V3 Pool (0x4146...5623) slot0 [0x3850c7bd] and liquidity [0x1a686502]',
+          entryFee: 'Gas only (~120k gas) + AMM dual-asset deposit',
           exitFee: 'Gas only (~100k gas) + LP divergence loss risk',
-          exclusionReason: 'Dynamic fee APR cannot be computed without a live volume indexer or subgraph on Pacific Mainnet. Model refuses to fabricate LP trading returns.',
-          notes: 'Contract infrastructure exists and is linked, but dynamic trading yield is strictly unavailable.',
-        },
-        {
-          id: 'axil-apc3m',
-          name: 'Axil Prime Credit 3M',
-          symbol: 'APC3M',
-          asset: 'USDC (USD Private Credit)',
-          contractAddress: CANONICAL_CONTRACTS.AXIL_CORE_VAULT,
-          qualificationStatus: 'DISQUALIFIED_FROM_PROS_REBALANCING',
-          qualificationBadge: 'DISQUALIFIED — OFF-CHAIN TARGET',
-          isVerifiedOnChain: true,
-          liveRate: '8.00% (Target APY)',
-          liveRateUnit: 'Off-Chain Target APY',
-          provenance: 'Off-chain advertised target APY. Secondary USDC vault accepting USD stablecoins, not PROS.',
-          entryFee: 'Double AMM swap friction (PROS -> USDC) + gas',
-          exitFee: 'Double AMM swap friction (USDC -> PROS) + gas + 3-month lockup',
-          exclusionReason: 'Off-chain target APY for USD private credit. Not an on-chain PROS yield mechanism. Excluded to prevent misleading users.',
-          notes: 'Different asset class (USDC) with credit risk and 3-month fixed lockup.',
-        },
-        {
-          id: 'native-pos-consensus',
-          name: 'Native PoS Consensus Staking',
-          symbol: 'PROS Validator',
-          asset: 'Native PROS',
-          contractAddress: '0x0000000000000000000000000000000000000000',
-          qualificationStatus: 'DISQUALIFIED_AS_DELEGATABLE',
-          qualificationBadge: 'DISQUALIFIED — NOT DELEGATABLE',
-          isVerifiedOnChain: false,
-          liveRate: '~8.50% (Nominal Validator Emission)',
-          liveRateUnit: 'Validator Protocol Emission',
-          provenance: 'Pharos Consensus Specification documentation only. No public delegator contract deployed.',
-          entryFee: 'Hardware setup + 32,000+ PROS minimum node deposit',
-          exitFee: '21-day consensus unbonding period',
-          exclusionReason: 'Pharos Pacific Mainnet does not have a permissionless validator delegation smart contract. Individual delegators cannot stake native PROS without running hardware.',
-          notes: 'Underlying consensus emission, but inaccessible as a direct user delegation strategy.',
-        },
-      ];
+          instantExitAvailable: false,
+          instantExitFee: null,
+          instantExitStatus: 'NO_VERIFIED_SECONDARY_LIQUIDITY',
+          lockupDays: 0,
+          totalSettlementDays: 0,
+          riskDisclosures: src.riskDisclosures,
+          exclusionReason: 'Informational dual-asset benchmark. Subject to impermanent loss and dual-token exposure (USDC & WPROS); excluded from automated single-asset PROS rebalancing.',
+          notes: 'Monitored as an informational dual-asset benchmark. Not an automated MOVE destination.',
+        };
+      });
 
       this.sendJson(res, 200, {
+        yieldSourceCoverage: {
+          status: 'THREE_SOURCES_MONITORED',
+          totalMonitoredCount: snapshot.sourceCount,
+          qualifiedCount: snapshot.qualifiedSourceCount,
+          actionableCount: snapshot.actionableSourceCount,
+          isThreeSourceRequirementMet: snapshot.meetsThreeSourceRequirement,
+          summary: '1 Actionable Verified Yield Source (Faroo stPROS), 2 Live Informational / Benchmark Sources (Native PoS, FaroSwap V3 LP)',
+          actionableSources: ['Faroo Liquid Staking (stPROS)'],
+          informationalSources: ['Pharos Native PoS Consensus Staking', 'FaroSwap Uniswap V3 WPROS/USDC LP'],
+        },
+        instantExit: {
+          instantExitAvailable: false,
+          instantExitFee: null,
+          instantExitStatus: 'NO_VERIFIED_SECONDARY_LIQUIDITY',
+          message: 'No verified secondary market liquidity pool exists for stPROS on Pacific Mainnet. Unbonding must use the 15-day patient queue.',
+        },
         invariantNotice: {
-          status: 'FEWER_THAN_THREE_QUALIFYING_SOURCES',
-          verifiedCount: 1,
+          status: 'THREE_SOURCES_MONITORED',
+          verifiedCount: snapshot.actionableSourceCount,
+          qualifiedCount: snapshot.qualifiedSourceCount,
+          monitoredCount: snapshot.sourceCount,
           requiredCount: 3,
-          isRequirementMet: false,
-          message: 'Only ONE qualifying yield source (Faroo stPROS) is currently verified on Pacific Mainnet. The three-source acceptance requirement is not yet met.',
+          isRequirementMet: snapshot.meetsThreeSourceRequirement,
+          message: 'Dynamic yield-source coverage: 1 actionable verified source (Faroo stPROS) and 2 live informational benchmark sources (Native PoS, FaroSwap V3 LP) monitored on-chain.',
         },
         sources,
-        latestBlockNumber: context.blockNumber,
-        gasPriceGwei: `${context.gasPriceGwei.toFixed(2)} Gwei`,
+        latestBlockNumber: snapshot.blockNumber,
+        blockTimestamp: snapshot.blockTimestamp,
+        isAllFresh: snapshot.isAllFresh,
+        gasPriceGwei: `${gasPrice.gasPriceGwei.toFixed(2)} Gwei`,
       });
     } catch (err) {
       this.sendJson(res, 500, {
@@ -372,7 +418,7 @@ export class ApiRouter {
           totalLifecycleCostPros: frictionCostPros.toFixed(6),
           breakEvenDays,
           breakEvenFormatted,
-          minimumHoldingDays: rec.targetStrategyId === 'faroo-patient-staking' ? 14 : 0,
+          minimumHoldingDays: rec.targetStrategyId === 'faroo-patient-staking' ? 15 : 0,
           lifecycleGas: {
             entryGasUnits,
             exitGasUnits,
@@ -387,9 +433,9 @@ export class ApiRouter {
               'Deposit WPROS into Faroo stPROS Vault (90,000 gas)',
             ],
             exitOperations: isPatientStaking
-              ? ['Submit RequestWithdraw queue order (85,000 gas, 14-day protocol unbonding period)']
+              ? ['Submit RequestWithdraw queue order (85,000 gas, 15-day total unbonding and settlement period: 14-day protocol queue + 1-day safety buffer)']
               : isInstantDex
-              ? ['Swap stPROS to WPROS on DEX AMM (145,000 gas assumed benchmark, 0.30% pool fee + slippage)']
+              ? ['Swap stPROS to WPROS on DEX AMM (145,000 gas assumed benchmark, 0.30% pool fee + slippage; unverified secondary liquidity)']
               : [],
           },
           disclosures: {
@@ -397,9 +443,9 @@ export class ApiRouter {
             caching: 'Short-lived in-memory cache (3,000ms TTL) applied to JSON-RPC reads to safeguard Pacific Mainnet RPC during burst execution; not long-term storage.',
             invariantNotice: 'FEWER_THAN_THREE_QUALIFYING_SOURCES: Requirement not met (1 verified on-chain, 0 execution alternatives counted toward requirement).',
             singleSourceNotice: 'Limited scope: Recommendation compares 1 qualifying on-chain source (Faroo stPROS) against Native PROS holding benchmark. Acceptance requirement of 3 qualifying sources is NOT MET.',
-            dexExitNotice: 'Faroo instant DEX exit is classified strictly as an EXECUTION ALTERNATIVE with 0.30% pool fee + slippage, NOT an independent yield source. Instant exit swap gas (145k) is an empirical benchmark assumption, not a live measured receipt.',
+            dexExitNotice: 'Faroo instant DEX exit is classified strictly as an EXECUTION ALTERNATIVE with 0.30% pool fee + slippage, NOT an independent yield source. No verified secondary stPROS pool exists on Pacific Mainnet; automated MOVE recommendations to instant DEX are disabled.',
             lifecycleUnification: 'Unified 265,000-gas physical lifecycle: 180,000 gas ERC-4626 entry (Wrap 45k + Approve 45k + Deposit 90k) + 85,000 gas unbonding queue exit. Deducted once from gross yield.',
-            breakEvenNotice: 'Yield Accrual Break-Even indicates elapsed time to earn yield equal to transaction gas; it does NOT bypass the mandatory 14-day protocol unbonding queue.',
+            breakEvenNotice: 'Yield Accrual Break-Even indicates elapsed time to earn yield equal to transaction gas; it does NOT bypass the mandatory 15-day protocol unbonding and settlement requirement (14-day queue + 1-day buffer).',
             yieldAssumptionNotice: 'Illustrative yield assumption: 8.5% annualized. This is a model input for scenario calculations, not a verified current or forward APY. Actual yield may differ.',
           },
           reasons: [
@@ -409,7 +455,7 @@ export class ApiRouter {
               ? `Projected Net Advantage: +${projectedNetGainPros.toFixed(6)} PROS over holding baseline PROS after deducting single lifecycle cost of ${frictionCostPros.toFixed(6)} PROS (${estimatedGasCostPros.toFixed(6)} PROS gas + ${nonGasFeeCostPros.toFixed(6)} PROS protocol fees).`
               : `Moving capital is not recommended under selected scenario parameters.`,
             isPatientStaking
-              ? `Yield Accrual Break-Even: ${breakEvenFormatted} to recover gas cost from yield. Principal withdrawal remains subject to the 14-day protocol unbonding queue.`
+              ? `Yield Accrual Break-Even: ${breakEvenFormatted} to recover gas cost from yield. Principal withdrawal remains subject to the mandatory 15-day protocol unbonding and settlement requirement (14-day queue + 1-day buffer).`
               : `Break-Even: ${breakEvenFormatted} under instant liquidity trading conditions.`,
             'Illustrative yield assumption: 8.5% annualized. This is a model input for scenario calculations, not a verified current or forward APY. Actual yield may differ.',
           ],

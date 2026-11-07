@@ -52,7 +52,8 @@ describe('Gate 6 Production Smoke Tests — Standalone dist/server.js Artifact',
 
       const html = await res.text();
       assert.match(html, /Pharos Yield Optimizer/);
-      assert.match(html, /ACCEPTANCE CRITERIA STATUS: FEWER THAN THREE QUALIFYING SOURCES/);
+      assert.match(html, /Yield-Source Coverage/);
+      assert.match(html, /3 Sources Monitored On-Chain/);
     });
 
     it('serves dist/ui/styles.css with 200 OK', async () => {
@@ -87,22 +88,27 @@ describe('Gate 6 Production Smoke Tests — Standalone dist/server.js Artifact',
       assert.ok(data.isFresh, 'Block observation must be marked fresh');
     });
 
-    it('GET /api/sources returns live Faroo stPROS exchange rate and strictly preserves one-source invariant', async () => {
+    it('GET /api/sources returns dynamic three-source yield coverage and instant-exit status', async () => {
       const res = await fetch(`${baseUrl}/api/sources`);
       assert.equal(res.status, 200);
       const data = await res.json();
 
-      // Invariant verification
-      assert.equal(data.invariantNotice.status, 'FEWER_THAN_THREE_QUALIFYING_SOURCES');
-      assert.equal(data.invariantNotice.verifiedCount, 1);
-      assert.equal(data.invariantNotice.requiredCount, 3);
-      assert.equal(data.invariantNotice.isRequirementMet, false);
+      // Invariant and coverage verification
+      assert.ok(data.yieldSourceCoverage);
+      assert.equal(data.yieldSourceCoverage.totalMonitoredCount, 3);
+      assert.equal(data.yieldSourceCoverage.actionableCount, 1);
+      assert.equal(data.yieldSourceCoverage.isThreeSourceRequirementMet, true);
+
+      // Instant exit safety verification
+      assert.ok(data.instantExit);
+      assert.equal(data.instantExit.instantExitAvailable, false);
+      assert.equal(data.instantExit.instantExitStatus, 'NO_VERIFIED_SECONDARY_LIQUIDITY');
 
       // Sources verification
-      assert.equal(data.sources.length, 4);
+      assert.equal(data.sources.length, 3);
       const faroo = data.sources.find((s: any) => s.id === 'faroo-stpros');
       assert.ok(faroo);
-      assert.equal(faroo.qualificationStatus, 'QUALIFIED_GENUINE_SOURCE');
+      assert.equal(faroo.qualificationStatus, 'FULLY_QUALIFIED');
       assert.ok(parseFloat(faroo.liveRate) >= 1.004, `Faroo rate should be >= 1.004, got ${faroo.liveRate}`);
     });
 

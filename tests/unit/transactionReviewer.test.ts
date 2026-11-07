@@ -102,18 +102,20 @@ describe('TransactionReviewer - Non-Custodial Safety & ABI Verification', () => 
     });
   });
 
-  describe('Faroo Instant DEX Review Generation', () => {
+  describe('Faroo Instant DEX Review Generation (Unverified Secondary Liquidity)', () => {
     const review = TransactionReviewer.generateReview({
       strategyId: 'faroo-instant-dex',
       amountPros: 500,
       userAddress: '0x2222222222222222222222222222222222222222',
     });
 
-    it('identifies strategy as instant DEX exit and explains swap friction', () => {
+    it('refuses calldata preparation and marks review as NOT ready for external review', () => {
       assert.equal(review.strategyId, 'faroo-instant-dex');
-      const step3Risk = review.steps[2].risksAndConstraints.join(' ');
-      assert.match(step3Risk, /Pharos DEX/i);
-      assert.match(step3Risk, /0.30% swap fee/i);
+      assert.strictEqual(review.isReadyForExternalReview, false);
+      assert.strictEqual(review.steps.length, 1);
+      assert.strictEqual(review.steps[0].payloadStatus, 'UNAVAILABLE');
+      assert.match(review.steps[0].unavailabilityReason!, /NO_VERIFIED_SECONDARY_LIQUIDITY/);
+      assert.match(review.actionSummary, /DISABLED for Faroo Instant DEX Exit/);
     });
   });
 
@@ -337,7 +339,7 @@ describe('TransactionReviewer - Non-Custodial Safety & ABI Verification', () => 
         );
       });
 
-      it('works identically for Faroo Instant DEX with valid receiver address', () => {
+      it('refuses calldata preparation for Faroo Instant DEX even when valid receiver address is provided', () => {
         const validReceiver = '0x7777777777777777777777777777777777777777';
         const review = TransactionReviewer.generateReview({
           strategyId: 'faroo-instant-dex',
@@ -345,10 +347,9 @@ describe('TransactionReviewer - Non-Custodial Safety & ABI Verification', () => 
           userAddress: validReceiver,
         });
 
-        assert.strictEqual(review.receiverStatus, 'VALID');
-        assert.strictEqual(review.isReadyForExternalReview, true);
-        assert.strictEqual(review.steps[2].payloadStatus, 'AVAILABLE');
-        assert.ok(review.steps[2].payload!.data.endsWith('0000000000000000000000007777777777777777777777777777777777777777'));
+        assert.strictEqual(review.isReadyForExternalReview, false);
+        assert.strictEqual(review.steps[0].payloadStatus, 'UNAVAILABLE');
+        assert.match(review.steps[0].unavailabilityReason!, /NO_VERIFIED_SECONDARY_LIQUIDITY/);
       });
     });
 

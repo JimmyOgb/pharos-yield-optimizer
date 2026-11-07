@@ -14,6 +14,7 @@ import {
   type StrategyProjection,
   type ReasonCode,
   CANONICAL_CONTRACTS,
+  MEANINGFUL_ALPHA_THRESHOLD_WEI,
 } from '../types/index.ts';
 import {
   calculateGrossProjectedYield,
@@ -31,8 +32,8 @@ export const STRATEGY_PROFILES: Record<StrategyId, StrategyProfile> = {
     classification: 'VERIFIED_ONCHAIN',
     qualifiesTowardReq01: true, // Sole strictly qualifying on-chain source
     contractAddress: '0x6b0A44c64190279f7034b77c13a566E914FE5Ec4',
-    lockupPeriodDays: 14,
-    exitDelayDays: 14,
+    lockupPeriodDays: 15, // 14-day protocol unbonding queue + 1-day settlement buffer
+    exitDelayDays: 15,
     exitFeeBps: 0,
     requiresKyc: false,
   },
@@ -200,12 +201,14 @@ export function generateRecommendation(
   const currentProjection = comparisons.find((c) => c.profile.id === currentStrategyId)!;
 
   // Safeguard 3: Candidate Eligibility Filtering
-  // If user requests instant liquidity, Faroo Patient Staking (14d lock) is excluded
+  // If user requests instant liquidity, Faroo Patient Staking (15d lock) is excluded
   // Axil is excluded from automated PROS rebalance due to foreign denomination and off-chain target rate
+  // Faroo Instant DEX is strictly excluded from automated MOVE because no verified secondary pool exists on Pacific Mainnet
   const eligibleCandidates = comparisons.filter((c) => {
     if (c.profile.id === currentStrategyId) return false;
     if (c.profile.id === 'native-pros-baseline') return false; // Baseline benchmark is not a yield destination
     if (c.profile.id === 'axil-prime-credit-3m') return false; // Strictly excluded from automated PROS rebalance
+    if (c.profile.id === 'faroo-instant-dex') return false; // Automated MOVE disabled: unverified secondary pool on Pacific Mainnet
     if (query.requireInstantLiquidity && c.profile.lockupPeriodDays > 0) return false;
     if (!c.isLockupEligible) return false; // Horizon < lockup period
     return true;
@@ -213,6 +216,24 @@ export function generateRecommendation(
 
   // If no candidates are eligible due to duration or liquidity
   if (eligibleCandidates.length === 0) {
+    // If instant liquidity was required, explicitly disclose that no verified secondary DEX pool exists
+    if (query.requireInstantLiquidity) {
+      const dexCandidate = comparisons.find((c) => c.profile.id === 'faroo-instant-dex');
+      return {
+        decision: 'STAY_PUT',
+        reasonCode: 'NO_VERIFIED_SECONDARY_LIQUIDITY',
+        explanation:
+          'No verified secondary market liquidity pool exists for stPROS on Pharos DEX factories. Immediate liquidity redemption cannot be guaranteed on-chain without waiting in the 15-day protocol unbonding queue.',
+        netAdvantageWei: 0n,
+        netAdvantagePros: 0,
+        breakEvenDays: dexCandidate ? dexCandidate.breakEvenDays : 0,
+        selectedHorizonDays: query.horizonDays,
+        verifiedQualifyingSourcesCount: 1,
+        comparisons,
+        timestamp,
+      };
+    }
+
     const isHorizonConstrained =
       currentStrategyId === 'native-pros-baseline' &&
       comparisons.some((c) => c.profile.id !== currentStrategyId && !c.isLockupEligible);
@@ -221,7 +242,7 @@ export function generateRecommendation(
       decision: 'STAY_PUT',
       reasonCode: isHorizonConstrained ? 'HORIZON_SHORTER_THAN_LOCKUP' : 'ALREADY_IN_OPTIMAL_POSITION',
       explanation: isHorizonConstrained
-        ? `Investment horizon (${query.horizonDays} days) is shorter than mandatory protocol lockup/unbonding periods (14 days).`
+        ? `Investment horizon (${query.horizonDays} days) is shorter than mandatory protocol lockup/unbonding periods (15 days total: 14-day queue + 1-day settlement buffer).`
         : 'Currently held position remains optimal; no alternative satisfies current liquidity and horizon constraints.',
       netAdvantageWei: 0n,
       netAdvantagePros: 0,
@@ -239,7 +260,7 @@ export function generateRecommendation(
 
   const netAdvantageWei = bestCandidate.netGainWei - currentProjection.netGainWei;
 
-  // Decision Rule: Must provide positive net advantage after all friction
+  // Decision Rule 1: Must provide positive net advantage after all friction
   if (netAdvantageWei <= 0n) {
     // If user is already in a non-baseline strategy that outperforms all alternatives
     if (currentStrategyId !== 'native-pros-baseline') {
@@ -257,11 +278,11 @@ export function generateRecommendation(
       };
     }
 
-    // If horizon was too short for the primary 0% fee queue (14-day lockup)
+    // If horizon was too short for the primary 0% fee queue (15-day total unbonding and settlement)
     const isHorizonTooShort = !query.requireInstantLiquidity && query.horizonDays < STRATEGY_PROFILES['faroo-patient-staking'].lockupPeriodDays;
     const reasonCode: ReasonCode = isHorizonTooShort ? 'HORIZON_SHORTER_THAN_LOCKUP' : 'FRICTION_EXCEEDS_GROSS_YIELD';
     const explanation = isHorizonTooShort
-      ? `Investment horizon (${query.horizonDays} days) is shorter than mandatory protocol lockup (14 days) for Faroo Patient Staking, and alternative instant DEX liquidity friction exceeds gross yield.`
+      ? `Investment horizon (${query.horizonDays} days) is shorter than mandatory protocol lockup (15 days total: 14-day queue + 1-day settlement buffer) for Faroo Patient Staking, and alternative instant DEX liquidity friction exceeds gross yield.`
       : `Total transaction friction and exit costs exceed expected gross yield over ${query.horizonDays} days. Break-even requires ${bestCandidate.breakEvenDays} days.`;
 
     return {
@@ -278,7 +299,25 @@ export function generateRecommendation(
     };
   }
 
-  // Defensible positive alpha confirmed
+  // Decision Rule 2: Positive net advantage must satisfy minimum meaningful-alpha threshold (0.10 PROS in BigInt wei)
+  if (netAdvantageWei < MEANINGFUL_ALPHA_THRESHOLD_WEI) {
+    const netAdvantagePros = scaledToDecimal(netAdvantageWei);
+    return {
+      decision: 'STAY_PUT',
+      reasonCode: 'TIE_NO_MEANINGFUL_ALPHA',
+      explanation: `Projected incremental net advantage (+${netAdvantagePros.toFixed(4)} PROS) does not exceed the minimum meaningful alpha threshold of 0.10 PROS (10^17 wei). Rebalancing transaction and execution risks outweigh negligible marginal yield.`,
+      targetStrategyId: undefined,
+      netAdvantageWei,
+      netAdvantagePros,
+      breakEvenDays: bestCandidate.breakEvenDays,
+      selectedHorizonDays: query.horizonDays,
+      verifiedQualifyingSourcesCount: 1,
+      comparisons,
+      timestamp,
+    };
+  }
+
+  // Defensible positive alpha confirmed (>= 0.10 PROS in BigInt wei)
   const netAdvantagePros = scaledToDecimal(netAdvantageWei);
   return {
     decision: 'MOVE',

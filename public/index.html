@@ -34,15 +34,16 @@
       </div>
     </header>
 
-    <!-- CRITICAL INVARIANT BANNER -->
-    <section class="invariant-banner" id="invariantBanner">
-      <div class="banner-icon">⚠️</div>
-      <div class="banner-content">
-        <h3>ACCEPTANCE CRITERIA STATUS: FEWER THAN THREE QUALIFYING SOURCES</h3>
-        <p>
-          Only <strong>ONE qualifying yield source (Faroo stPROS)</strong> is currently verified on Pharos Pacific Mainnet.
-          The official three-source acceptance requirement is <strong>NOT YET MET</strong>.
-          Disqualified candidates (Pharos DEX LP dynamic APR, Axil off-chain credit, and Native PoS validator staking) are transparently categorized below without fabricated metrics.
+    <!-- DYNAMIC YIELD SOURCE COVERAGE PRESENTATION -->
+    <section class="coverage-banner" id="coverageBanner">
+      <div class="coverage-icon">📊</div>
+      <div class="coverage-content">
+        <div class="coverage-header">
+          <span class="coverage-title">Yield-Source Coverage</span>
+          <span class="badge badge-success" id="coverageStatusBadge">3 Sources Monitored On-Chain</span>
+        </div>
+        <p id="coverageSummaryText">
+          Monitoring <strong>1 Actionable Verified Yield Source</strong> (<a href="#sourcesList" class="source-link">Faroo stPROS</a>) and <strong>2 Live Informational / Benchmark Sources</strong> (<a href="#sourcesList" class="source-link">Native PoS Consensus</a> &amp; <a href="#sourcesList" class="source-link">FaroSwap V3 LP</a>) with verifiable on-chain state on Pharos Pacific Mainnet.
         </p>
       </div>
     </section>

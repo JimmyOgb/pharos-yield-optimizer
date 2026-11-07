@@ -337,26 +337,52 @@ export class TransactionReviewer {
 
   /**
    * Faroo Instant DEX review:
-   * Staking is identical to Faroo Patient Staking, but the exit pathway is designated as AMM swap.
+   * Refuses calldata preparation because no verified secondary liquidity pool exists on Pharos Pacific Mainnet.
+   * Disables transaction generation to protect capital from unbacked swap execution.
    */
   private static reviewFarooInstantDex(
-    amountPros: number,
-    amountWei: bigint,
-    userAddress: string | undefined,
-    gasPriceWei: bigint,
+    _amountPros: number,
+    _amountWei: bigint,
+    _userAddress: string | undefined,
+    _gasPriceWei: bigint,
     gasPriceGwei: string
   ): TransactionReviewReport {
-    const report = this.reviewFarooStaking(amountPros, amountWei, userAddress, gasPriceWei, gasPriceGwei);
-    report.strategyId = 'faroo-instant-dex';
-    report.strategyName = 'Faroo Liquid Staking (stPROS) - Instant DEX Exit';
-    report.actionSummary = `Deposit ${amountPros.toLocaleString()} PROS into Faroo stPROS vault, targeting exit via DEX liquidity pool for instant liquidity (0.30% fee + slippage).`;
-
-    // Add note to step 3 regarding exit difference
-    report.steps[2].risksAndConstraints.push(
-      'Exit Route: Instant exit will swap stPROS back to PROS on Pharos DEX rather than waiting in the unbonding queue. Subject to 0.30% swap fee and market liquidity slippage.'
-    );
-
-    return report;
+    return {
+      timestamp: Date.now(),
+      strategyId: 'faroo-instant-dex',
+      strategyName: 'Faroo Liquid Staking (stPROS) - Instant DEX Exit',
+      actionSummary: `Transaction preparation is DISABLED for Faroo Instant DEX Exit: No verified secondary liquidity pool exists on Pharos Pacific Mainnet.`,
+      estimatedGasCostWei: '0',
+      estimatedGasCostPros: '0.000000',
+      gasPriceGwei,
+      receiverStatus: 'MISSING',
+      isReadyForExternalReview: false,
+      steps: [
+        {
+          stepNumber: 1,
+          title: 'Instant Exit Route Unavailable',
+          contractName: 'Pharos DEX Pool / Router',
+          contractAddress: CANONICAL_CONTRACTS.DEX_POOL_MANAGER,
+          methodName: 'UNAVAILABLE',
+          selector: '0x00000000',
+          isAbiVerified: false,
+          explanation: 'Secondary DEX liquidity pool for stPROS does not exist or has unverified liquidity on Pharos Pacific Mainnet.',
+          parameters: [],
+          payloadStatus: 'UNAVAILABLE',
+          unavailabilityReason: 'NO_VERIFIED_SECONDARY_LIQUIDITY: No verified stPROS liquidity pool exists for instant exchange. Calldata preparation is disabled to protect capital from unbacked swap execution.',
+          risksAndConstraints: [
+            'Instant liquidity cannot be guaranteed without an on-chain AMM pair.',
+            'Capital must use patient 14-day protocol unbonding queue via Faroo Patient Staking.',
+          ],
+        },
+      ],
+      safetyNotice: {
+        isNonCustodial: true,
+        canSign: false,
+        canBroadcast: false,
+        disclaimer: 'Transaction preparation is disabled when execution pathways lack verified on-chain liquidity.',
+      },
+    };
   }
 
   /**

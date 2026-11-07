@@ -40,9 +40,9 @@ describe('RecommendationEngine - Deterministic Outcomes & Provenance Safeguards'
       assert.ok(res.explanation.includes('Faroo Patient Staking'));
     });
 
-    it('recommends MOVE to Faroo Instant DEX when instant liquidity is required and horizon allows break-even', () => {
+    it('outputs STAY_PUT with NO_VERIFIED_SECONDARY_LIQUIDITY when instant liquidity is required (Gate 10B Phase 1)', () => {
       // 1,000 PROS over 60 days with instant liquidity
-      // Gross yield = 13.97 PROS. Friction = 4.00 PROS. Net = +9.97 PROS.
+      // Faroo Instant DEX is disabled as an actionable MOVE target because no verified secondary pool exists
       const res = generateRecommendation({
         principalWei: 1_000n * SCALE_18,
         asset: 'PROS',
@@ -50,16 +50,15 @@ describe('RecommendationEngine - Deterministic Outcomes & Provenance Safeguards'
         requireInstantLiquidity: true,
       });
 
-      assert.strictEqual(res.decision, 'MOVE');
-      assert.strictEqual(res.reasonCode, 'POSITIVE_NET_ALPHA');
-      assert.strictEqual(res.targetStrategyId, 'faroo-instant-dex');
-      assert.ok(res.netAdvantagePros > 9.9 && res.netAdvantagePros < 10.0);
-      assert.ok(Math.abs(res.breakEvenDays - 17.177866) < 0.01, `Expected ~17.18 days, got ${res.breakEvenDays}`);
+      assert.strictEqual(res.decision, 'STAY_PUT');
+      assert.strictEqual(res.reasonCode, 'NO_VERIFIED_SECONDARY_LIQUIDITY');
+      assert.strictEqual(res.targetStrategyId, undefined);
+      assert.ok(res.explanation.includes('No verified secondary market liquidity pool exists'));
     });
   });
 
   describe('Outcome: STAY_PUT (Friction Exceeds Yield / Horizon Constrained)', () => {
-    it('outputs STAY_PUT when investment horizon (7 days) is shorter than mandatory 14-day lockup', () => {
+    it('outputs STAY_PUT when investment horizon (7 days) is shorter than mandatory 15-day total unbonding requirement', () => {
       const res = generateRecommendation({
         principalWei: 1_000n * SCALE_18,
         asset: 'PROS',
@@ -73,7 +72,21 @@ describe('RecommendationEngine - Deterministic Outcomes & Provenance Safeguards'
       assert.strictEqual(res.netAdvantageWei, 0n);
     });
 
-    it('outputs STAY_PUT when DEX exit friction exceeds yield over short horizon (10 days)', () => {
+    it('outputs STAY_PUT when investment horizon (14 days) is shorter than mandatory 15-day total unbonding requirement', () => {
+      const res = generateRecommendation({
+        principalWei: 1_000n * SCALE_18,
+        asset: 'PROS',
+        horizonDays: 14,
+        requireInstantLiquidity: false,
+      });
+
+      assert.strictEqual(res.decision, 'STAY_PUT');
+      assert.strictEqual(res.reasonCode, 'HORIZON_SHORTER_THAN_LOCKUP');
+      assert.ok(res.explanation.includes('15 days total'));
+      assert.strictEqual(res.netAdvantageWei, 0n);
+    });
+
+    it('outputs STAY_PUT when instant liquidity is required over 10 days (no verified pool exists)', () => {
       // 1,000 PROS over 10 days with instant liquidity
       // Gross yield = 2.33 PROS. Friction = 4.00 PROS. Net loss = -1.67 PROS.
       const res = generateRecommendation({
@@ -84,9 +97,14 @@ describe('RecommendationEngine - Deterministic Outcomes & Provenance Safeguards'
       });
 
       assert.strictEqual(res.decision, 'STAY_PUT');
-      assert.strictEqual(res.reasonCode, 'FRICTION_EXCEEDS_GROSS_YIELD');
-      assert.ok(Math.abs(res.breakEvenDays - 17.177866) < 0.01, `Expected ~17.18 days, got ${res.breakEvenDays}`);
-      assert.ok(res.explanation.includes('exceed expected gross yield'));
+      assert.strictEqual(res.reasonCode, 'NO_VERIFIED_SECONDARY_LIQUIDITY');
+      assert.ok(res.explanation.includes('No verified secondary market liquidity pool exists'));
+
+      // Gate 10A.3 regression check: negative net gain must be valid number, not NaN
+      const dexComp = res.comparisons.find((c) => c.profile.id === 'faroo-instant-dex')!;
+      assert.ok(dexComp.netGainPros < 0, `Expected negative net gain, got ${dexComp.netGainPros}`);
+      assert.strictEqual(Number.isNaN(dexComp.netGainPros), false, 'netGainPros must not be NaN');
+      assert.ok(Math.abs(dexComp.netGainPros - (-1.671233)) < 0.01, `Expected ~ -1.671233, got ${dexComp.netGainPros}`);
     });
 
     it('outputs STAY_PUT when principal is zero', () => {
@@ -125,8 +143,8 @@ describe('RecommendationEngine - Deterministic Outcomes & Provenance Safeguards'
       });
 
       assert.strictEqual(res.decision, 'STAY_PUT');
-      assert.strictEqual(res.reasonCode, 'ALREADY_IN_OPTIMAL_POSITION');
-      assert.ok(res.explanation.includes('optimal strategy') || res.explanation.includes('satisfies current liquidity'));
+      assert.strictEqual(res.reasonCode, 'NO_VERIFIED_SECONDARY_LIQUIDITY');
+      assert.ok(res.explanation.includes('No verified secondary market liquidity pool exists'));
     });
   });
 
@@ -229,7 +247,7 @@ describe('RecommendationEngine - Deterministic Outcomes & Provenance Safeguards'
       assert.strictEqual(res.reasonCode, 'HORIZON_SHORTER_THAN_LOCKUP');
     });
 
-    it('7-day horizon: outputs STAY_PUT (7 days < 14-day queue)', () => {
+    it('7-day horizon: outputs STAY_PUT (7 days < 15-day total unbonding requirement)', () => {
       const res = generateRecommendation({
         principalWei: 1_000n * SCALE_18,
         asset: 'PROS',
@@ -240,16 +258,39 @@ describe('RecommendationEngine - Deterministic Outcomes & Provenance Safeguards'
       assert.strictEqual(res.reasonCode, 'HORIZON_SHORTER_THAN_LOCKUP');
     });
 
-    it('14-day horizon: exactly meets lockup boundary -> outputs MOVE to Faroo Patient Staking', () => {
+    it('14-day horizon: outputs STAY_PUT (14 days < 15-day total unbonding requirement)', () => {
       const res = generateRecommendation({
         principalWei: 1_000n * SCALE_18,
         asset: 'PROS',
         horizonDays: 14,
         requireInstantLiquidity: false,
       });
+      assert.strictEqual(res.decision, 'STAY_PUT');
+      assert.strictEqual(res.reasonCode, 'HORIZON_SHORTER_THAN_LOCKUP');
+    });
+
+    it('15-day horizon: exactly meets lockup boundary -> outputs MOVE to Faroo Patient Staking', () => {
+      const res = generateRecommendation({
+        principalWei: 1_000n * SCALE_18,
+        asset: 'PROS',
+        horizonDays: 15,
+        requireInstantLiquidity: false,
+      });
       assert.strictEqual(res.decision, 'MOVE');
       assert.strictEqual(res.targetStrategyId, 'faroo-patient-staking');
-      assert.ok(res.netAdvantagePros > 3.25);
+      assert.ok(res.netAdvantagePros > 3.48 && res.netAdvantagePros < 3.51, `Expected ~3.49 PROS, got ${res.netAdvantagePros}`);
+    });
+
+    it('21-day horizon: outputs MOVE to Faroo Patient Staking with positive net yield', () => {
+      const res = generateRecommendation({
+        principalWei: 1_000n * SCALE_18,
+        asset: 'PROS',
+        horizonDays: 21,
+        requireInstantLiquidity: false,
+      });
+      assert.strictEqual(res.decision, 'MOVE');
+      assert.strictEqual(res.targetStrategyId, 'faroo-patient-staking');
+      assert.ok(res.netAdvantagePros > 4.88 && res.netAdvantagePros < 4.90, `Expected ~4.89 PROS, got ${res.netAdvantagePros}`);
     });
 
     it('60-day horizon: outputs MOVE with positive net yield', () => {
@@ -401,6 +442,132 @@ describe('RecommendationEngine - Deterministic Outcomes & Provenance Safeguards'
         requireInstantLiquidity: false,
       });
 
+      assert.notStrictEqual(res.targetStrategyId, 'native-pros-baseline');
+      assert.strictEqual(res.targetStrategyId, 'faroo-patient-staking');
+    });
+  });
+
+  describe('Gate 10B - Meaningful-Alpha Threshold & Unverified DEX Route Safeguards', () => {
+    it('outputs STAY_PUT with TIE_NO_MEANINGFUL_ALPHA when net advantage is positive but below 0.10 PROS', () => {
+      // 1 PROS over 15 days @ 8.50% APR:
+      // Gross yield = 0.003493 PROS. Gas friction ~ 0.000331 PROS. Net advantage ~ +0.003162 PROS.
+      // 0.003162 PROS > 0, but < 0.10 PROS threshold. Must return STAY_PUT (TIE_NO_MEANINGFUL_ALPHA).
+      const res = generateRecommendation({
+        principalWei: 1n * SCALE_18,
+        asset: 'PROS',
+        horizonDays: 15,
+        requireInstantLiquidity: false,
+      });
+
+      assert.strictEqual(res.decision, 'STAY_PUT');
+      assert.strictEqual(res.reasonCode, 'TIE_NO_MEANINGFUL_ALPHA');
+      assert.strictEqual(res.targetStrategyId, undefined);
+      assert.ok(res.netAdvantageWei > 0n, 'Net advantage in wei must be strictly positive');
+      assert.ok(res.netAdvantageWei < 100_000_000_000_000_000n, 'Net advantage must be strictly below 0.10 PROS in wei');
+      assert.ok(res.explanation.includes('does not exceed the minimum meaningful alpha threshold of 0.10 PROS'));
+    });
+
+    it('outputs MOVE with POSITIVE_NET_ALPHA when net advantage meets or exceeds 0.10 PROS threshold', () => {
+      // 1,000 PROS over 15 days @ 8.50% APR:
+      // Gross yield = 3.4931 PROS. Gas friction = 0.000331 PROS. Net advantage = +3.4928 PROS >= 0.10 PROS.
+      const res = generateRecommendation({
+        principalWei: 1_000n * SCALE_18,
+        asset: 'PROS',
+        horizonDays: 15,
+        requireInstantLiquidity: false,
+      });
+
+      assert.strictEqual(res.decision, 'MOVE');
+      assert.strictEqual(res.reasonCode, 'POSITIVE_NET_ALPHA');
+      assert.strictEqual(res.targetStrategyId, 'faroo-patient-staking');
+      assert.ok(res.netAdvantageWei >= 100_000_000_000_000_000n, 'Net advantage must be >= 0.10 PROS in wei');
+      assert.ok(res.netAdvantagePros > 3.48);
+    });
+
+    it('strictly disables automated MOVE to faroo-instant-dex across all horizons when instant liquidity is required', () => {
+      const horizons = [1, 7, 10, 14, 15, 21, 30, 60, 90, 180, 365];
+      for (const h of horizons) {
+        const res = generateRecommendation({
+          principalWei: 10_000n * SCALE_18,
+          asset: 'PROS',
+          horizonDays: h,
+          requireInstantLiquidity: true,
+        });
+
+        assert.strictEqual(
+          res.decision,
+          'STAY_PUT',
+          `Horizon ${h}d must output STAY_PUT when instant liquidity is required`
+        );
+        assert.strictEqual(
+          res.reasonCode,
+          'NO_VERIFIED_SECONDARY_LIQUIDITY',
+          `Horizon ${h}d must output NO_VERIFIED_SECONDARY_LIQUIDITY`
+        );
+        assert.strictEqual(
+          res.targetStrategyId,
+          undefined,
+          `Horizon ${h}d must never select a target strategy for automated MOVE`
+        );
+        assert.ok(
+          res.explanation.includes('No verified secondary market liquidity pool exists'),
+          `Horizon ${h}d explanation must explain lack of verified secondary pool`
+        );
+      }
+    });
+
+    it('preserves patient Faroo route eligibility only when horizon >= 15 days', () => {
+      // 7d: ineligible
+      const r7 = generateRecommendation({
+        principalWei: 1_000n * SCALE_18,
+        asset: 'PROS',
+        horizonDays: 7,
+        requireInstantLiquidity: false,
+      });
+      assert.strictEqual(r7.decision, 'STAY_PUT');
+      assert.strictEqual(r7.reasonCode, 'HORIZON_SHORTER_THAN_LOCKUP');
+
+      // 14d: ineligible
+      const r14 = generateRecommendation({
+        principalWei: 1_000n * SCALE_18,
+        asset: 'PROS',
+        horizonDays: 14,
+        requireInstantLiquidity: false,
+      });
+      assert.strictEqual(r14.decision, 'STAY_PUT');
+      assert.strictEqual(r14.reasonCode, 'HORIZON_SHORTER_THAN_LOCKUP');
+
+      // 15d: eligible
+      const r15 = generateRecommendation({
+        principalWei: 1_000n * SCALE_18,
+        asset: 'PROS',
+        horizonDays: 15,
+        requireInstantLiquidity: false,
+      });
+      assert.strictEqual(r15.decision, 'MOVE');
+      assert.strictEqual(r15.targetStrategyId, 'faroo-patient-staking');
+
+      // 30d: eligible
+      const r30 = generateRecommendation({
+        principalWei: 1_000n * SCALE_18,
+        asset: 'PROS',
+        horizonDays: 30,
+        requireInstantLiquidity: false,
+      });
+      assert.strictEqual(r30.decision, 'MOVE');
+      assert.strictEqual(r30.targetStrategyId, 'faroo-patient-staking');
+    });
+
+    it('confirms informational strategies are never promoted to actionable MOVE destinations', () => {
+      const res = generateRecommendation({
+        principalWei: 1_000n * SCALE_18,
+        asset: 'PROS',
+        horizonDays: 60,
+        requireInstantLiquidity: false,
+      });
+
+      assert.notStrictEqual(res.targetStrategyId, 'faroo-instant-dex');
+      assert.notStrictEqual(res.targetStrategyId, 'axil-prime-credit-3m');
       assert.notStrictEqual(res.targetStrategyId, 'native-pros-baseline');
       assert.strictEqual(res.targetStrategyId, 'faroo-patient-staking');
     });

@@ -157,7 +157,7 @@ describe('Vercel Serverless Function Adapter — Gate 7A Verification', () => {
       assert.equal(data.isFresh, true);
     });
 
-    it('GET /api/sources via api/sources.ts strictly enforces one-source invariant', async () => {
+    it('GET /api/sources via api/sources.ts returns dynamic three-source yield coverage', async () => {
       const req = new MockServerlessRequest({ method: 'GET', url: '/api/sources' });
       const res = new MockServerlessResponse();
 
@@ -165,7 +165,18 @@ describe('Vercel Serverless Function Adapter — Gate 7A Verification', () => {
 
       assert.equal(res.statusCode, 200);
       const data = res.json<{
-        invariantNotice: {
+        yieldSourceCoverage?: {
+          status: string;
+          totalMonitoredCount: number;
+          qualifiedCount: number;
+          actionableCount: number;
+          isThreeSourceRequirementMet: boolean;
+        };
+        instantExit?: {
+          instantExitAvailable: boolean;
+          instantExitStatus: string;
+        };
+        invariantNotice?: {
           status: string;
           verifiedCount: number;
           requiredCount: number;
@@ -174,14 +185,19 @@ describe('Vercel Serverless Function Adapter — Gate 7A Verification', () => {
         sources: Array<{ id: string; qualificationStatus: string; liveRate: string }>;
       }>();
 
-      assert.equal(data.invariantNotice.status, 'FEWER_THAN_THREE_QUALIFYING_SOURCES');
-      assert.equal(data.invariantNotice.verifiedCount, 1);
-      assert.equal(data.invariantNotice.requiredCount, 3);
-      assert.equal(data.invariantNotice.isRequirementMet, false);
+      assert.ok(data.yieldSourceCoverage);
+      assert.equal(data.yieldSourceCoverage.totalMonitoredCount, 3);
+      assert.equal(data.yieldSourceCoverage.actionableCount, 1);
+      assert.equal(data.yieldSourceCoverage.isThreeSourceRequirementMet, true);
 
+      assert.ok(data.instantExit);
+      assert.equal(data.instantExit.instantExitAvailable, false);
+      assert.equal(data.instantExit.instantExitStatus, 'NO_VERIFIED_SECONDARY_LIQUIDITY');
+
+      assert.equal(data.sources.length, 3);
       const faroo = data.sources.find(s => s.id === 'faroo-stpros');
       assert.ok(faroo);
-      assert.equal(faroo.qualificationStatus, 'QUALIFIED_GENUINE_SOURCE');
+      assert.equal(faroo.qualificationStatus, 'FULLY_QUALIFIED');
       assert.ok(parseFloat(faroo.liveRate) > 1.0);
     });
   });
@@ -286,6 +302,7 @@ describe('Vercel Serverless Function Adapter — Gate 7A Verification', () => {
 
       assert.equal(data.recommendation.decision, 'STAY_PUT');
       assert.ok(
+        data.recommendation.reasonCode === 'NO_VERIFIED_SECONDARY_LIQUIDITY' ||
         data.recommendation.reasonCode === 'FRICTION_EXCEEDS_GROSS_YIELD' ||
         data.recommendation.reasonCode === 'NEGATIVE_NET_ADVANTAGE'
       );

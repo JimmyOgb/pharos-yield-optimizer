@@ -107,4 +107,77 @@ describe('FarooAdapter - Unit Tests with Mocked Fixtures', () => {
       /Invalid Faroo contract state: totalPooledAssets is zero or negative/
     );
   });
+
+  it('correctly derives historical realized APR and attaches short-window warning', () => {
+    const client = new PharosRpcClient({ rpcUrl: 'http://mock-rpc' });
+    const adapter = new FarooAdapter(client);
+
+    const obsStart = {
+      chainId: 1672,
+      contractAddress: FAROO_STPROS_PROXY,
+      implementationAddress: EXPECTED_FAROO_IMPLEMENTATION,
+      blockNumber: 21_924_812,
+      blockTimestamp: 1_793_600_000,
+      observationTimestamp: 1_793_600_000,
+      raw: { totalPooledProsHex: '0x01', totalSupplyHex: '0x01' },
+      totalPooledProsWei: 4_300_000n * 10n ** 18n,
+      totalSupplyWei: 4_300_000n * 10n ** 18n,
+      spotRateScaled: 10n ** 18n, // 1.00000000
+      spotRateDecimal: 1.0,
+      totalPooledProsFormatted: '4,300,000.0000',
+      totalSupplyFormatted: '4,300,000.0000',
+      rpcEndpoint: client.rpcUrl,
+      provenance: 'VERIFIED_ONCHAIN' as const,
+      isFresh: true,
+    };
+
+    const obsEnd = {
+      ...obsStart,
+      blockNumber: 22_348_179,
+      blockTimestamp: 1_793_600_000 + 413_367, // 4.78 days later
+      spotRateScaled: 1_003_427_000_000_000_000n, // +0.3427% gain
+      spotRateDecimal: 1.003427,
+    };
+
+    const result = adapter.deriveHistoricalRealizedApr(obsStart, obsEnd);
+    assert.strictEqual(result.isShortObservationWarning, true);
+    assert.ok(result.aprPercentage > 25 && result.aprPercentage < 27); // ~26.14% APR
+    assert.ok(result.warningNotice?.includes('early episodic reward indexing'));
+  });
+
+  it('correctly enforces hard 15-day unbonding requirements in normalized source', () => {
+    const client = new PharosRpcClient({ rpcUrl: 'http://mock-rpc' });
+    const adapter = new FarooAdapter(client);
+
+    const nowSec = Math.floor(Date.now() / 1000);
+    const obs = {
+      chainId: 1672,
+      contractAddress: FAROO_STPROS_PROXY,
+      implementationAddress: EXPECTED_FAROO_IMPLEMENTATION,
+      blockNumber: 22_030_188,
+      blockTimestamp: nowSec - 30,
+      observationTimestamp: nowSec,
+      raw: { totalPooledProsHex: '0x01', totalSupplyHex: '0x01' },
+      totalPooledProsWei: 4_317_458n * 10n ** 18n,
+      totalSupplyWei: 4_266_747n * 10n ** 18n,
+      spotRateScaled: 1_011_885_000_000_000_000n,
+      spotRateDecimal: 1.011885,
+      totalPooledProsFormatted: '4,317,458.7845',
+      totalSupplyFormatted: '4,266,747.8860',
+      rpcEndpoint: client.rpcUrl,
+      provenance: 'VERIFIED_ONCHAIN' as const,
+      isFresh: true,
+    };
+
+    const normalized = adapter.toNormalizedSource(obs);
+    assert.strictEqual(normalized.id, 'faroo-stpros');
+    assert.strictEqual(normalized.qualificationStatus, 'FULLY_QUALIFIED');
+    assert.strictEqual(normalized.lockupRequirements.lockupDays, 14);
+    assert.strictEqual(normalized.lockupRequirements.settlementBufferDays, 1);
+    assert.strictEqual(normalized.lockupRequirements.totalSettlementDays, 15);
+    assert.strictEqual(normalized.lockupRequirements.isHardEligibilityConstraint, true);
+    assert.strictEqual(normalized.lockupRequirements.minHoldingDaysForActionable, 15);
+    assert.strictEqual(normalized.isActionableRecommendationDestination, true);
+    assert.strictEqual(normalized.forwardScenarioAssumption?.scenarioRateBps, 850);
+  });
 });

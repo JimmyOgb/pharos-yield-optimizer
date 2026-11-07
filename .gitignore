@@ -38,3 +38,10 @@ yarn-debug.log*
 # Test Coverage
 coverage/
 .nyc_output/
+
+# Video generation artifacts
+demo/raw_video/
+demo/*.mp3
+demo/concat_list.txt
+
+*.mp4
